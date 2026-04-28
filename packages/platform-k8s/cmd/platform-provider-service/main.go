@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -16,12 +17,12 @@ import (
 	providerservicev1 "code-code.internal/go-contract/platform/provider/v1"
 	"code-code.internal/go-contract/platform/provider/v1/providerservicev1connect"
 	platformk8s "code-code.internal/platform-k8s"
-	"code-code.internal/platform-k8s/internal/triggerhttp"
-	"code-code.internal/platform-k8s/providerconnect"
-	"code-code.internal/platform-k8s/providerservice"
-	"code-code.internal/platform-k8s/state"
-	"code-code.internal/platform-k8s/telemetry"
-	"code-code.internal/platform-k8s/temporalruntime"
+	"code-code.internal/platform-k8s/internal/platform/state"
+	"code-code.internal/platform-k8s/internal/platform/telemetry"
+	"code-code.internal/platform-k8s/internal/platform/temporalruntime"
+	"code-code.internal/platform-k8s/internal/platform/triggerhttp"
+	"code-code.internal/platform-k8s/internal/providerservice"
+	"code-code.internal/platform-k8s/internal/providerservice/providerconnect"
 	"connectrpc.com/connect"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
@@ -40,6 +41,7 @@ func main() {
 	namespace := envOrDefault("PLATFORM_PROVIDER_SERVICE_NAMESPACE", "code-code")
 	authAddr := envOrDefault("PLATFORM_PROVIDER_SERVICE_AUTH_GRPC_ADDR", "platform-auth-service:8081")
 	modelAddr := envOrDefault("PLATFORM_PROVIDER_SERVICE_MODEL_GRPC_ADDR", "platform-model-service:8081")
+	internalActionToken := strings.TrimSpace(os.Getenv("PLATFORM_PROVIDER_SERVICE_INTERNAL_ACTION_TOKEN"))
 	databaseURL := firstEnv("PLATFORM_DATABASE_URL", "PLATFORM_PROVIDER_SERVICE_DATABASE_URL")
 
 	telemetryShutdown, err := telemetry.Setup(context.Background(), envOrDefault("OTEL_SERVICE_NAME", "platform-provider-service"))
@@ -72,10 +74,11 @@ func main() {
 	must(err)
 	defer temporalClient.Close()
 	postConnectRuntime, err := providerconnect.NewTemporalPostConnectWorkflowRuntime(providerconnect.TemporalPostConnectWorkflowRuntimeConfig{
-		Client:              temporalClient,
-		TaskQueue:           temporalConfig.TaskQueue,
-		PlatformNamespace:   namespace,
-		ProviderHTTPBaseURL: envOrDefault("PLATFORM_PROVIDER_SERVICE_WORKFLOW_PROVIDER_HTTP_BASE_URL", "http://platform-provider-service.code-code.svc.cluster.local:8080/internal/actions"),
+		Client:                  temporalClient,
+		TaskQueue:               temporalConfig.TaskQueue,
+		PlatformNamespace:       namespace,
+		ProviderHTTPBaseURL:     envOrDefault("PLATFORM_PROVIDER_SERVICE_WORKFLOW_PROVIDER_HTTP_BASE_URL", "http://platform-provider-service.code-code.svc.cluster.local:8080/internal/actions"),
+		ProviderHTTPActionToken: internalActionToken,
 	})
 	must(err)
 
@@ -87,6 +90,7 @@ func main() {
 		ModelConn:                          modelConn,
 		StatePool:                          statePool,
 		ProviderConnectProviderHTTPBaseURL: postConnectRuntime.ProviderHTTPBaseURL(),
+		ProviderHostTelemetryMaxTargets:    envIntOrDefault("PLATFORM_PROVIDER_SERVICE_HOST_TELEMETRY_MAX_TARGETS", 200),
 		PostConnect:                        postConnectRuntime,
 	})
 	must(err)
@@ -131,8 +135,12 @@ func main() {
 				return map[string]any{"provider_ids": response.GetProviderIds(), "message": response.GetMessage()}, nil
 			},
 		},
+		AuthToken: internalActionToken,
 	})
 	must(err)
+	if internalActionToken == "" {
+		log.Printf("internal action endpoints are disabled (env PLATFORM_PROVIDER_SERVICE_INTERNAL_ACTION_TOKEN is empty)")
+	}
 
 	listener, err := net.Listen("tcp", addr)
 	must(err)
@@ -141,6 +149,7 @@ func main() {
 	httpMux := http.NewServeMux()
 	_, providerConnectHandler := providerservicev1connect.NewProviderServiceHandler(providerConnectHTTPAdapter{Server: server})
 	httpMux.Handle(providerservicev1connect.ProviderServiceListVendorsProcedure, providerConnectHandler)
+	httpMux.HandleFunc(providerservice.ProviderHostTelemetryTargetsPath, server.ServeProviderHostTelemetryTargets)
 	httpMux.Handle("/", triggerServer)
 	httpServer := &http.Server{Handler: httpMux}
 	grpcServer := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()))
@@ -246,6 +255,18 @@ func firstEnv(keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func envIntOrDefault(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func must(err error) {
