@@ -25,7 +25,7 @@ type googleAIStudioRPCCallInput struct {
 	MetricTimeSeries googleAIStudioMetricTimeSeriesRequest
 }
 
-func (c *googleAIStudioVendorObservabilityCollector) call(
+func (c *googleAIStudioObservabilityCollector) call(
 	ctx context.Context,
 	httpClient *http.Client,
 	input googleAIStudioRPCCallInput,
@@ -87,9 +87,9 @@ func (c *googleAIStudioVendorObservabilityCollector) call(
 	defer resp.Body.Close()
 	recordVendorObservabilityHTTPResponse(span, resp.StatusCode, len(resp.Header.Values("Set-Cookie")))
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, vendorObservabilityMaxBodyReadSize))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, observabilityMaxBodyReadSize))
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, unauthorizedVendorObservabilityError(
+		return nil, unauthorizedObservabilityError(
 			fmt.Sprintf("google ai studio quotas: %s unauthorized: status %d: %s", input.Method, resp.StatusCode, strings.TrimSpace(string(body))),
 		)
 	}

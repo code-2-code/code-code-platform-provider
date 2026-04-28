@@ -11,20 +11,20 @@ import (
 const openrouterCollectorID = "openrouter-quotas"
 
 func init() {
-	registerVendorObservabilityCollectorFactory(openrouterCollectorID, NewOpenRouterVendorObservabilityCollector)
+	registerVendorCollectorFactory(openrouterCollectorID, NewOpenRouterObservabilityCollector)
 }
 
-func NewOpenRouterVendorObservabilityCollector() VendorObservabilityCollector {
-	return &openrouterVendorObservabilityCollector{}
+func NewOpenRouterObservabilityCollector() ObservabilityCollector {
+	return &openrouterObservabilityCollector{}
 }
 
-type openrouterVendorObservabilityCollector struct{}
+type openrouterObservabilityCollector struct{}
 
-func (c *openrouterVendorObservabilityCollector) CollectorID() string {
+func (c *openrouterObservabilityCollector) CollectorID() string {
 	return openrouterCollectorID
 }
 
-func (c *openrouterVendorObservabilityCollector) Collect(ctx context.Context, input VendorObservabilityCollectInput) (*VendorObservabilityCollectResult, error) {
+func (c *openrouterObservabilityCollector) Collect(ctx context.Context, input ObservabilityCollectInput) (*ObservabilityCollectResult, error) {
 	if input.HTTPClient == nil {
 		return nil, fmt.Errorf("providerobservability: openrouter quotas: http client is nil")
 	}
@@ -35,7 +35,7 @@ func (c *openrouterVendorObservabilityCollector) Collect(ctx context.Context, in
 	}
 
 	if apiKey == "" {
-		return nil, unauthorizedVendorObservabilityError("openrouter quotas: api key is required; configure provider authentication")
+		return nil, unauthorizedObservabilityError("openrouter quotas: api key is required; configure provider authentication")
 	}
 
 	client := openrouter.New(
@@ -46,16 +46,16 @@ func (c *openrouterVendorObservabilityCollector) Collect(ctx context.Context, in
 	res, err := client.Analytics.GetUserActivity(ctx, nil, nil, nil)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unauthorized") || strings.Contains(strings.ToLower(err.Error()), "invalid api key") {
-			return nil, unauthorizedVendorObservabilityError(err.Error())
+			return nil, unauthorizedObservabilityError(err.Error())
 		}
 		return nil, fmt.Errorf("providerobservability: fetch openrouter user activity: %w", err)
 	}
 
 	if res == nil || len(res.Data) == 0 {
-		return &VendorObservabilityCollectResult{}, nil
+		return &ObservabilityCollectResult{}, nil
 	}
 
-	var rows []VendorObservabilityMetricRow
+	var rows []ObservabilityMetricRow
 	for _, item := range res.Data {
 		labels := map[string]string{
 			"window": "30d",
@@ -67,7 +67,7 @@ func (c *openrouterVendorObservabilityCollector) Collect(ctx context.Context, in
 		if item.Requests > 0 {
 			requestLabels := copyStringMap(labels)
 			requestLabels["resource"] = "requests"
-			rows = append(rows, VendorObservabilityMetricRow{
+			rows = append(rows, ObservabilityMetricRow{
 				MetricName: providerUsageRequestsMetric,
 				Labels:     requestLabels,
 				Value:      float64(item.Requests),
@@ -76,7 +76,7 @@ func (c *openrouterVendorObservabilityCollector) Collect(ctx context.Context, in
 		if item.Usage > 0 {
 			costLabels := copyStringMap(labels)
 			costLabels["resource"] = "cost"
-			rows = append(rows, VendorObservabilityMetricRow{
+			rows = append(rows, ObservabilityMetricRow{
 				MetricName: providerUsageCostUSDMetric,
 				Labels:     costLabels,
 				Value:      item.Usage,
@@ -86,7 +86,7 @@ func (c *openrouterVendorObservabilityCollector) Collect(ctx context.Context, in
 			inputLabels := copyStringMap(labels)
 			inputLabels["resource"] = "tokens"
 			inputLabels["token_type"] = "input"
-			rows = append(rows, VendorObservabilityMetricRow{
+			rows = append(rows, ObservabilityMetricRow{
 				MetricName: providerUsageTokensMetric,
 				Labels:     inputLabels,
 				Value:      float64(item.PromptTokens),
@@ -96,7 +96,7 @@ func (c *openrouterVendorObservabilityCollector) Collect(ctx context.Context, in
 			outputLabels := copyStringMap(labels)
 			outputLabels["resource"] = "tokens"
 			outputLabels["token_type"] = "output"
-			rows = append(rows, VendorObservabilityMetricRow{
+			rows = append(rows, ObservabilityMetricRow{
 				MetricName: providerUsageTokensMetric,
 				Labels:     outputLabels,
 				Value:      float64(item.CompletionTokens),
@@ -104,7 +104,7 @@ func (c *openrouterVendorObservabilityCollector) Collect(ctx context.Context, in
 		}
 	}
 
-	return &VendorObservabilityCollectResult{
+	return &ObservabilityCollectResult{
 		GaugeRows: rows,
 	}, nil
 }

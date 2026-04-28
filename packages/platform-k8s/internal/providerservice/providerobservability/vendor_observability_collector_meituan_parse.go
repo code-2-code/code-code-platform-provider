@@ -44,7 +44,7 @@ import (
 //	    ]
 //	  }
 //	}
-func parseMeituanTokenUsageGaugeRows(body []byte) ([]VendorObservabilityMetricRow, error) {
+func parseMeituanTokenUsageGaugeRows(body []byte) ([]ObservabilityMetricRow, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, fmt.Errorf("providerobservability: meituan longcat token usage: decode response: %w (body: %s)", err, truncate(string(body), 256))
@@ -58,7 +58,7 @@ func parseMeituanTokenUsageGaugeRows(body []byte) ([]VendorObservabilityMetricRo
 		return nil, fmt.Errorf("providerobservability: meituan longcat token usage: usage array is empty")
 	}
 
-	rows := make([]VendorObservabilityMetricRow, 0, len(entries)*2)
+	rows := make([]ObservabilityMetricRow, 0, len(entries)*2)
 	for _, entry := range entries {
 		modelID := meituanTokenUsageModelID(entry)
 		if modelID == "" {
@@ -73,7 +73,7 @@ func parseMeituanTokenUsageGaugeRows(body []byte) ([]VendorObservabilityMetricRo
 		if v, ok := meituanTokenUsageInt(entry, "inputTokens", "input_tokens"); ok {
 			labels := copyStringMap(baseLabels)
 			labels["token_type"] = "input"
-			rows = append(rows, VendorObservabilityMetricRow{
+			rows = append(rows, ObservabilityMetricRow{
 				MetricName: meituanTokenUsageMetric,
 				Labels:     labels,
 				Value:      float64(v),
@@ -82,7 +82,7 @@ func parseMeituanTokenUsageGaugeRows(body []byte) ([]VendorObservabilityMetricRo
 		if v, ok := meituanTokenUsageInt(entry, "outputTokens", "output_tokens"); ok {
 			labels := copyStringMap(baseLabels)
 			labels["token_type"] = "output"
-			rows = append(rows, VendorObservabilityMetricRow{
+			rows = append(rows, ObservabilityMetricRow{
 				MetricName: meituanTokenUsageMetric,
 				Labels:     labels,
 				Value:      float64(v),

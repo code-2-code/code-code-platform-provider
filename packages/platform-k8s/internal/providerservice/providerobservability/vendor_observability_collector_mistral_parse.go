@@ -27,7 +27,7 @@ import (
 //	    ...
 //	  ]
 //	}
-func parseMistralBillingGaugeRows(body []byte) ([]VendorObservabilityMetricRow, error) {
+func parseMistralBillingGaugeRows(body []byte) ([]ObservabilityMetricRow, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, fmt.Errorf("providerobservability: mistral billing: decode response: %w (body: %s)", err, truncate(string(body), 256))
@@ -43,7 +43,7 @@ func parseMistralBillingGaugeRows(body []byte) ([]VendorObservabilityMetricRow, 
 		return nil, fmt.Errorf("providerobservability: mistral billing: 'data' array is empty")
 	}
 
-	rows := make([]VendorObservabilityMetricRow, 0, len(entries)*2)
+	rows := make([]ObservabilityMetricRow, 0, len(entries)*2)
 	for _, entry := range entries {
 		modelID := mistralBillingModelID(entry)
 		if modelID == "" {
@@ -58,7 +58,7 @@ func parseMistralBillingGaugeRows(body []byte) ([]VendorObservabilityMetricRow, 
 		if v, ok := mistralBillingInt(entry, "input_tokens"); ok {
 			labels := copyStringMap(baseLabels)
 			labels["token_type"] = "input"
-			rows = append(rows, VendorObservabilityMetricRow{
+			rows = append(rows, ObservabilityMetricRow{
 				MetricName: mistralBillingTokensMetric,
 				Labels:     labels,
 				Value:      float64(v),
@@ -67,7 +67,7 @@ func parseMistralBillingGaugeRows(body []byte) ([]VendorObservabilityMetricRow, 
 		if v, ok := mistralBillingInt(entry, "output_tokens"); ok {
 			labels := copyStringMap(baseLabels)
 			labels["token_type"] = "output"
-			rows = append(rows, VendorObservabilityMetricRow{
+			rows = append(rows, ObservabilityMetricRow{
 				MetricName: mistralBillingTokensMetric,
 				Labels:     labels,
 				Value:      float64(v),

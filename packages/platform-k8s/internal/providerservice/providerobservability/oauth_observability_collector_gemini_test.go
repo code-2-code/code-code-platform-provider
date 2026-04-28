@@ -10,7 +10,7 @@ import (
 	"code-code.internal/platform-k8s/internal/supportservice/clidefinitions/codeassist"
 )
 
-func TestGeminiOAuthObservabilityCollectorCollectQuota(t *testing.T) {
+func TestGeminiObservabilityCollectorCollectQuota(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got, want := r.Header.Get("Authorization"), "Bearer access-token"; got != want {
 			t.Fatalf("authorization = %q, want %q", got, want)
@@ -34,8 +34,8 @@ func TestGeminiOAuthObservabilityCollectorCollectQuota(t *testing.T) {
 	defer server.Close()
 	defer codeassist.SetGeminiURLsForTest(server.URL+"/load", server.URL+"/quota")()
 
-	collector := NewGeminiOAuthObservabilityCollector()
-	result, err := collector.Collect(context.Background(), OAuthObservabilityCollectInput{
+	collector := NewGeminiObservabilityCollector()
+	result, err := collector.Collect(context.Background(), ObservabilityCollectInput{
 		AccessToken: "access-token",
 		HTTPClient:  server.Client(),
 	})

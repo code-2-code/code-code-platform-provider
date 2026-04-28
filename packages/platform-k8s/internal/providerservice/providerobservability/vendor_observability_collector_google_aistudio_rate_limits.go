@@ -206,8 +206,8 @@ func googleAIStudioGemmaModel(modelID string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(modelID)), "gemma-")
 }
 
-func googleAIStudioMetricRows(models []googleAIStudioQuotaModel, now time.Time) []VendorObservabilityMetricRow {
-	rows := make([]VendorObservabilityMetricRow, 0, len(models)*4)
+func googleAIStudioMetricRows(models []googleAIStudioQuotaModel, now time.Time) []ObservabilityMetricRow {
+	rows := make([]ObservabilityMetricRow, 0, len(models)*4)
 	for _, model := range models {
 		for _, limit := range model.Limits {
 			labels := map[string]string{
@@ -218,20 +218,20 @@ func googleAIStudioMetricRows(models []googleAIStudioQuotaModel, now time.Time) 
 				"preview":        strconv.FormatBool(model.Preview),
 				"quota_type":     limit.QuotaType,
 			}
-			rows = append(rows, VendorObservabilityMetricRow{
+			rows = append(rows, ObservabilityMetricRow{
 				MetricName: googleAIStudioQuotaLimitMetric,
 				Labels:     labels,
 				Value:      limit.Value,
 			})
 			if limit.HasRemaining {
-				rows = append(rows, VendorObservabilityMetricRow{
+				rows = append(rows, ObservabilityMetricRow{
 					MetricName: providerQuotaRemainingMetric,
 					Labels:     labels,
 					Value:      limit.Remaining,
 				})
 			}
 			if resetAt, ok := googleAIStudioQuotaResetTimestamp(limit.Window, now); ok {
-				rows = append(rows, VendorObservabilityMetricRow{
+				rows = append(rows, ObservabilityMetricRow{
 					MetricName: providerQuotaResetTimestampMetric,
 					Labels:     labels,
 					Value:      resetAt,

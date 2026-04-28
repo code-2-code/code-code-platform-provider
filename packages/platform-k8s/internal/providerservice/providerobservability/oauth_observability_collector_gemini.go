@@ -22,16 +22,16 @@ const (
 	geminiFlashLiteResetTimestampMetric   = "gen_ai.provider.cli.oauth.gemini.flash.lite.reset.timestamp.seconds"
 )
 
-// NewGeminiOAuthObservabilityCollector creates one Gemini collector.
-func NewGeminiOAuthObservabilityCollector() OAuthObservabilityCollector {
-	return &geminiOAuthObservabilityCollector{}
+// NewGeminiObservabilityCollector creates one Gemini collector.
+func NewGeminiObservabilityCollector() ObservabilityCollector {
+	return &geminiObservabilityCollector{}
 }
 
 func init() {
-	registerOAuthObservabilityCollectorFactory("gemini-cli", NewGeminiOAuthObservabilityCollector)
+	registerOAuthCollectorFactory("gemini-cli", NewGeminiObservabilityCollector)
 }
 
-type geminiOAuthObservabilityCollector struct{}
+type geminiObservabilityCollector struct{}
 
 type geminiQuotaGroupSummary struct {
 	remainingAmount  float64
@@ -74,13 +74,13 @@ var geminiQuotaGroups = []geminiQuotaGroupDefinition{
 	},
 }
 
-func (c *geminiOAuthObservabilityCollector) CollectorID() string {
+func (c *geminiObservabilityCollector) CollectorID() string {
 	return "gemini-cli"
 }
 
-func (c *geminiOAuthObservabilityCollector) Collect(ctx context.Context, input OAuthObservabilityCollectInput) (*OAuthObservabilityCollectResult, error) {
+func (c *geminiObservabilityCollector) Collect(ctx context.Context, input ObservabilityCollectInput) (*ObservabilityCollectResult, error) {
 	if strings.TrimSpace(input.AccessToken) == "" {
-		return nil, unauthorizedOAuthObservabilityError("gemini access token is empty")
+		return nil, unauthorizedObservabilityError("gemini access token is empty")
 	}
 	projectID := strings.TrimSpace(input.MaterialValues[materialKeyProjectID])
 	codeAssistPayload, err := codeassist.LoadGeminiCodeAssist(ctx, input.HTTPClient, input.AccessToken, projectID)
@@ -105,7 +105,7 @@ func (c *geminiOAuthObservabilityCollector) Collect(ctx context.Context, input O
 	if tierName != "" {
 		backfillValues[materialKeyTierName] = tierName
 	}
-	return &OAuthObservabilityCollectResult{
+	return &ObservabilityCollectResult{
 		GaugeRows:                gaugeRows(geminiQuotaGaugeValues(quotaPayload)),
 		CredentialBackfillValues: backfillValues,
 	}, nil

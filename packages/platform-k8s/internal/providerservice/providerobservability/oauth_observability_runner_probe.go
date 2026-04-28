@@ -3,14 +3,12 @@ package providerobservability
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"strings"
 
 	authv1 "code-code.internal/go-contract/platform/auth/v1"
 	supportv1 "code-code.internal/go-contract/platform/support/v1"
 	providerv1 "code-code.internal/go-contract/provider/v1"
 	"code-code.internal/platform-k8s/internal/cliruntimeservice/cliversions"
-	"code-code.internal/platform-k8s/internal/platform/outboundhttp"
 	clioauth "code-code.internal/platform-k8s/internal/supportservice/clidefinitions/oauth"
 )
 
@@ -18,17 +16,17 @@ func (r *OAuthObservabilityRunner) probeProvider(
 	ctx context.Context,
 	providerID string,
 	surface *providerv1.ProviderSurfaceBinding,
-	trigger OAuthObservabilityProbeTrigger,
-) (*OAuthObservabilityProbeResult, error) {
+	trigger Trigger,
+) (*ProbeResult, error) {
 	providerID = strings.TrimSpace(providerID)
 	providerSurfaceBindingID := ""
 	if surface != nil {
 		providerSurfaceBindingID = strings.TrimSpace(surface.GetSurfaceId())
 	}
-	result := &OAuthObservabilityProbeResult{
+	result := &ProbeResult{
 		ProviderID:               providerID,
 		ProviderSurfaceBindingID: providerSurfaceBindingID,
-		Outcome:                  OAuthObservabilityProbeOutcomeUnsupported,
+		Outcome:                  ProbeOutcomeUnsupported,
 	}
 	if surface == nil || surface.GetRuntime() == nil {
 		return r.recordProbeResult(result, trigger, "", r.now().UTC(), oauthObservabilityFailureBackoff), nil
@@ -38,13 +36,13 @@ func (r *OAuthObservabilityRunner) probeProvider(
 		return r.recordProbeResult(result, trigger, "", r.now().UTC(), oauthObservabilityFailureBackoff), nil
 	}
 	cliID := strings.TrimSpace(providerv1.RuntimeCLIID(runtime))
-	result.CLIID = cliID
+	result.OwnerID = cliID
 	if cliID == "" {
 		return r.recordProbeResult(result, trigger, "", r.now().UTC(), oauthObservabilityFailureBackoff), nil
 	}
 	activeQueryPolicy, supported, err := r.resolveActiveQueryPolicy(ctx, cliID)
 	if err != nil {
-		result.Outcome = OAuthObservabilityProbeOutcomeFailed
+		result.Outcome = ProbeOutcomeFailed
 		result.Reason = observabilityFailureReasonFromError(err)
 		result.Message = err.Error()
 		return r.recordProbeResult(result, trigger, cliID, r.now().UTC(), oauthObservabilityFailureBackoff), nil
@@ -60,9 +58,9 @@ func (r *OAuthObservabilityRunner) probeProvider(
 	}
 
 	now := r.now().UTC()
-	if trigger != OAuthObservabilityProbeTriggerManual {
+	if trigger != TriggerManual {
 		if throttled, nextAllowedAt := r.throttled(result.ProviderID, providerSurfaceBindingID, now); throttled {
-			result.Outcome = OAuthObservabilityProbeOutcomeThrottled
+			result.Outcome = ProbeOutcomeThrottled
 			result.Message = "operation is throttled by minimum interval"
 			result.LastAttemptAt = timePointerCopy(&now)
 			result.NextAllowedAt = timePointerCopy(&nextAllowedAt)
@@ -94,14 +92,14 @@ func (r *OAuthObservabilityRunner) probeProvider(
 		return resolveErr
 	})
 	if err != nil {
-		result.Outcome = OAuthObservabilityProbeOutcomeFailed
+		result.Outcome = ProbeOutcomeFailed
 		result.Reason = observabilityFailureReasonFromError(err)
 		result.Message = err.Error()
 		return r.recordProbeResult(result, trigger, cliID, now, oauthObservabilityFailureBackoff), nil
 	}
 	clientIdentity := clioauth.ResolveOAuthClientIdentity(cli, clientVersion)
 
-	httpClient, err := r.httpClient(ctx, observabilityEgressAuth{
+	httpClient, err := observabilityHTTPClient(ctx, observabilityEgressAuth{
 		CLIID:                    cliID,
 		ProviderID:               result.ProviderID,
 		ProviderSurfaceBindingID: providerSurfaceBindingID,
@@ -109,13 +107,14 @@ func (r *OAuthObservabilityRunner) probeProvider(
 		HeaderValuePrefix:        "Bearer",
 	})
 	if err != nil {
-		result.Outcome = OAuthObservabilityProbeOutcomeFailed
+		result.Outcome = ProbeOutcomeFailed
 		result.Reason = observabilityFailureReasonFromError(err)
 		result.Message = err.Error()
 		return r.recordProbeResult(result, trigger, cliID, now, oauthObservabilityFailureBackoff), nil
 	}
-	materialValues, err := r.readCredentialMaterialFields(
+	materialValues, err := readCredentialMaterialFields(
 		ctx,
+		r.credentialReader,
 		credentialID,
 		&authv1.CredentialMaterialReadPolicyRef{
 			Kind:        authv1.CredentialMaterialReadPolicyKind_CREDENTIAL_MATERIAL_READ_POLICY_KIND_CLI_OAUTH_ACTIVE_QUERY,
@@ -126,12 +125,12 @@ func (r *OAuthObservabilityRunner) probeProvider(
 		activeQueryPolicy.MaterialReadFields,
 	)
 	if err != nil {
-		result.Outcome = OAuthObservabilityProbeOutcomeFailed
+		result.Outcome = ProbeOutcomeFailed
 		result.Reason = observabilityFailureReasonFromError(err)
 		result.Message = err.Error()
 		return r.recordProbeResult(result, trigger, cliID, now, oauthObservabilityFailureBackoff), nil
 	}
-	collectResult, collectErr := collector.Collect(ctx, OAuthObservabilityCollectInput{
+	collectResult, collectErr := collector.Collect(ctx, ObservabilityCollectInput{
 		ProviderSurfaceBindingID: providerSurfaceBindingID,
 		CredentialID:             credentialID,
 		AccessToken:              fakeOAuthCredential(credentialID).GetOauth().GetAccessToken(),
@@ -143,18 +142,18 @@ func (r *OAuthObservabilityRunner) probeProvider(
 		ObservabilityUserAgent:   clientIdentity.ObservabilityUserAgent,
 	})
 	if collectErr != nil {
-		if isOAuthObservabilityUnauthorizedError(collectErr) {
-			result.Outcome = OAuthObservabilityProbeOutcomeAuthBlocked
+		if isObservabilityUnauthorizedError(collectErr) {
+			result.Outcome = ProbeOutcomeAuthBlocked
 		} else {
-			result.Outcome = OAuthObservabilityProbeOutcomeFailed
+			result.Outcome = ProbeOutcomeFailed
 		}
 		result.Reason = oauthObservabilityReasonForOutcome(result.Outcome, collectErr.Error())
 		result.Message = collectErr.Error()
 		return r.recordProbeResult(result, trigger, cliID, now, oauthObservabilityFailureBackoff), nil
 	}
 	if collectResult != nil {
-		if err := r.mergeCredentialBackfills(ctx, credentialID, activeQueryPolicy.CredentialBackfills, collectResult.CredentialBackfillValues); err != nil {
-			result.Outcome = OAuthObservabilityProbeOutcomeFailed
+		if err := mergeCredentialBackfills(ctx, r.credentialMerger, credentialID, activeQueryPolicy.CredentialBackfills, collectResult.CredentialBackfillValues); err != nil {
+			result.Outcome = ProbeOutcomeFailed
 			result.Reason = observabilityFailureReasonFromError(err)
 			result.Message = err.Error()
 			return r.recordProbeResult(result, trigger, cliID, now, oauthObservabilityFailureBackoff), nil
@@ -162,7 +161,7 @@ func (r *OAuthObservabilityRunner) probeProvider(
 		r.metrics.recordCollectorValues(cliID, result.ProviderID, collectResult.GaugeRows)
 	}
 
-	result.Outcome = OAuthObservabilityProbeOutcomeExecuted
+	result.Outcome = ProbeOutcomeExecuted
 	result.Message = "operation completed"
 	nextAllowedAfter := activeQueryPolicy.PollInterval
 	if nextAllowedAfter < oauthObservabilityPendingBackoff {
@@ -171,61 +170,20 @@ func (r *OAuthObservabilityRunner) probeProvider(
 	return r.recordProbeResult(result, trigger, cliID, now, nextAllowedAfter), nil
 }
 
-func (r *OAuthObservabilityRunner) httpClient(ctx context.Context, auth observabilityEgressAuth) (*http.Client, error) {
-	client, err := outboundhttp.NewClientFactory().NewClient(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return withObservabilityEgressAuth(client, auth), nil
-}
 
-func (r *OAuthObservabilityRunner) readCredentialMaterialFields(
-	ctx context.Context,
-	credentialID string,
-	policyRef *authv1.CredentialMaterialReadPolicyRef,
-	fields []string,
-) (map[string]string, error) {
-	if len(fields) == 0 {
-		return nil, nil
-	}
-	values, err := r.credentialReader.ReadCredentialMaterialFields(ctx, credentialID, policyRef, fields)
-	if err != nil {
-		return nil, err
-	}
-	return trimStringMap(values), nil
-}
 
-func trimStringMap(values map[string]string) map[string]string {
-	if len(values) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(values))
-	for key, value := range values {
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		if key == "" || value == "" {
-			continue
-		}
-		out[key] = value
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func oauthObservabilityOutcomeForAuthError(err error) OAuthObservabilityProbeOutcome {
+func oauthObservabilityOutcomeForAuthError(err error) ProbeOutcome {
 	if err == nil {
-		return OAuthObservabilityProbeOutcomeFailed
+		return ProbeOutcomeFailed
 	}
 	return oauthObservabilityOutcomeForAuthMessage(err.Error())
 }
 
-func oauthObservabilityOutcomeForAuthMessage(message string) OAuthObservabilityProbeOutcome {
+func oauthObservabilityOutcomeForAuthMessage(message string) ProbeOutcome {
 	if oauthObservabilityIsAuthBlockedMessage(message) {
-		return OAuthObservabilityProbeOutcomeAuthBlocked
+		return ProbeOutcomeAuthBlocked
 	}
-	return OAuthObservabilityProbeOutcomeFailed
+	return ProbeOutcomeFailed
 }
 
 func oauthObservabilityIsAuthBlockedMessage(message string) bool {
@@ -242,8 +200,8 @@ func oauthObservabilityIsAuthBlockedMessage(message string) bool {
 		strings.Contains(normalized, "refresh_token is missing")
 }
 
-func oauthObservabilityReasonForOutcome(outcome OAuthObservabilityProbeOutcome, message string) string {
-	if outcome == OAuthObservabilityProbeOutcomeAuthBlocked {
+func oauthObservabilityReasonForOutcome(outcome ProbeOutcome, message string) string {
+	if outcome == ProbeOutcomeAuthBlocked {
 		return oauthObservabilityAuthBlockedReason(message)
 	}
 	return observabilityFailureReason(message)

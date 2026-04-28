@@ -99,73 +99,16 @@ func vendorBindingHasSurface(binding *supportv1.VendorProviderBinding, surfaceID
 	return false
 }
 
-func (r *VendorObservabilityRunner) throttled(providerID string, providerSurfaceBindingID string, now time.Time) (bool, time.Time) {
-	stateKey := vendorObservabilityStateKey(providerID, providerSurfaceBindingID)
-	if stateKey == "" {
-		return false, time.Time{}
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	state, ok := r.states[stateKey]
-	if !ok || state.nextAllowedAt.IsZero() {
-		return false, time.Time{}
-	}
-	if now.Before(state.nextAllowedAt) {
-		return true, state.nextAllowedAt
-	}
-	return false, state.nextAllowedAt
-}
-
-func (r *VendorObservabilityRunner) nextAllowed(providerID string, providerSurfaceBindingID string) time.Time {
-	stateKey := vendorObservabilityStateKey(providerID, providerSurfaceBindingID)
-	if stateKey == "" {
-		return time.Time{}
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	state, ok := r.states[stateKey]
-	if !ok {
-		return time.Time{}
-	}
-	return state.nextAllowedAt
-}
-
 func (r *VendorObservabilityRunner) recordProbeResult(
-	result *VendorObservabilityProbeResult,
-	trigger VendorObservabilityProbeTrigger,
+	result *ProbeResult,
+	trigger Trigger,
 	now time.Time,
 	backoff time.Duration,
-) *VendorObservabilityProbeResult {
+) *ProbeResult {
 	if result == nil {
 		return nil
 	}
 	r.logVendorObservabilityProbeFailure(result)
-	if backoff <= 0 {
-		backoff = vendorObservabilityFailureBackoff
-	}
-	nextAllowedAt := now.Add(backoff)
-	stateKey := vendorObservabilityStateKey(result.ProviderID, result.ProviderSurfaceBindingID)
-	if stateKey == "" {
-		stateKey = vendorObservabilityStateKey("", result.ProviderSurfaceBindingID)
-	}
-	r.mu.Lock()
-	r.states[stateKey] = vendorObservabilityState{
-		lastAttemptAt: now,
-		nextAllowedAt: nextAllowedAt,
-	}
-	r.mu.Unlock()
-	result.LastAttemptAt = timePointerCopy(&now)
-	result.NextAllowedAt = timePointerCopy(&nextAllowedAt)
-	r.metrics.record(result.VendorID, result.ProviderID, trigger, result.Outcome, result.Reason, now, nextAllowedAt)
-	return result
+	return r.recordState(result, trigger, now, backoff)
 }
 
-func vendorObservabilityStateKey(providerID string, providerSurfaceBindingID string) string {
-	if providerID := strings.TrimSpace(providerID); providerID != "" {
-		return "provider:" + providerID
-	}
-	if surfaceID := strings.TrimSpace(providerSurfaceBindingID); surfaceID != "" {
-		return "surface:" + surfaceID
-	}
-	return ""
-}

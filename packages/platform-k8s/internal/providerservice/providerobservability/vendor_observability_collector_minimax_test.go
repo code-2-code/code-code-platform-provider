@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestMinimaxVendorObservabilityCollectorCollectsTextQuota(t *testing.T) {
+func TestMinimaxObservabilityCollectorCollectsTextQuota(t *testing.T) {
 	previousCNURL := minimaxRemainsCNURL
 	previousGlobalURL := minimaxRemainsGlobalURL
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +34,7 @@ func TestMinimaxVendorObservabilityCollectorCollectsTextQuota(t *testing.T) {
 		minimaxRemainsGlobalURL = previousGlobalURL
 	}()
 
-	result, err := NewMinimaxVendorObservabilityCollector().Collect(context.Background(), VendorObservabilityCollectInput{
+	result, err := NewMinimaxObservabilityCollector().Collect(context.Background(), ObservabilityCollectInput{
 		SurfaceBaseURL: "https://api.minimaxi.com/v1",
 		APIKey:         "test-key",
 		HTTPClient:     server.Client(),
@@ -60,7 +60,7 @@ func TestMinimaxVendorObservabilityCollectorCollectsTextQuota(t *testing.T) {
 	}
 }
 
-func TestMinimaxVendorObservabilityCollectorCollectsCurrentTokenPlanShape(t *testing.T) {
+func TestMinimaxObservabilityCollectorCollectsCurrentTokenPlanShape(t *testing.T) {
 	previousCNURL := minimaxRemainsCNURL
 	previousGlobalURL := minimaxRemainsGlobalURL
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +102,7 @@ func TestMinimaxVendorObservabilityCollectorCollectsCurrentTokenPlanShape(t *tes
 		minimaxRemainsGlobalURL = previousGlobalURL
 	}()
 
-	result, err := NewMinimaxVendorObservabilityCollector().Collect(context.Background(), VendorObservabilityCollectInput{
+	result, err := NewMinimaxObservabilityCollector().Collect(context.Background(), ObservabilityCollectInput{
 		SurfaceBaseURL: "https://api.minimaxi.com/v1",
 		APIKey:         "test-key",
 		HTTPClient:     server.Client(),
@@ -134,7 +134,7 @@ func TestMinimaxVendorObservabilityCollectorCollectsCurrentTokenPlanShape(t *tes
 	}
 }
 
-func TestMinimaxVendorObservabilityCollectorTreatsBaseRespUnauthorizedAsAuthBlocked(t *testing.T) {
+func TestMinimaxObservabilityCollectorTreatsBaseRespUnauthorizedAsAuthBlocked(t *testing.T) {
 	previousCNURL := minimaxRemainsCNURL
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"base_resp":{"status_code":1004,"status_msg":"cookie is missing, log in again"}}`))
@@ -145,7 +145,7 @@ func TestMinimaxVendorObservabilityCollectorTreatsBaseRespUnauthorizedAsAuthBloc
 		minimaxRemainsCNURL = previousCNURL
 	}()
 
-	_, err := NewMinimaxVendorObservabilityCollector().Collect(context.Background(), VendorObservabilityCollectInput{
+	_, err := NewMinimaxObservabilityCollector().Collect(context.Background(), ObservabilityCollectInput{
 		SurfaceBaseURL: "https://api.minimaxi.com/v1",
 		APIKey:         "test-key",
 		HTTPClient:     server.Client(),
@@ -153,7 +153,7 @@ func TestMinimaxVendorObservabilityCollectorTreatsBaseRespUnauthorizedAsAuthBloc
 	if err == nil {
 		t.Fatal("Collect() error = nil, want unauthorized error")
 	}
-	if !isVendorObservabilityUnauthorizedError(err) {
+	if !isObservabilityUnauthorizedError(err) {
 		t.Fatalf("Collect() error = %v, want unauthorized error", err)
 	}
 }
@@ -164,7 +164,7 @@ func TestMinimaxRemainsURLRejectsUnsupportedHost(t *testing.T) {
 	}
 }
 
-func vendorMetricRowValueWithLabels(rows []VendorObservabilityMetricRow, metricName string, labelName string, labelValue string) float64 {
+func vendorMetricRowValueWithLabels(rows []ObservabilityMetricRow, metricName string, labelName string, labelValue string) float64 {
 	for _, row := range rows {
 		if row.MetricName != metricName {
 			continue

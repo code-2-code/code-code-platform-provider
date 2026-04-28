@@ -6,7 +6,7 @@ func TestOAuthObservabilityOutcomeForAuthMessageClassifiesUnauthorized(t *testin
 	t.Parallel()
 
 	outcome := oauthObservabilityOutcomeForAuthMessage("antigravity request unauthorized: status 401")
-	if outcome != OAuthObservabilityProbeOutcomeAuthBlocked {
-		t.Fatalf("outcome = %q, want %q", outcome, OAuthObservabilityProbeOutcomeAuthBlocked)
+	if outcome != ProbeOutcomeAuthBlocked {
+		t.Fatalf("outcome = %q, want %q", outcome, ProbeOutcomeAuthBlocked)
 	}
 }

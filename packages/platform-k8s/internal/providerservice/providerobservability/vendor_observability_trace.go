@@ -19,7 +19,7 @@ var (
 	vendorObservabilityTracer = otel.Tracer("code-code/platform-k8s/authservice/internal/credentials/vendor-observability")
 )
 
-func startVendorObservabilityProbeSpan(ctx context.Context, providerID string, providerSurfaceBindingID string, trigger VendorObservabilityProbeTrigger) (context.Context, trace.Span) {
+func startVendorObservabilityProbeSpan(ctx context.Context, providerID string, providerSurfaceBindingID string, trigger Trigger) (context.Context, trace.Span) {
 	return vendorObservabilityTracer.Start(ctx, "vendor_observability.operation", trace.WithAttributes(
 		attribute.String("code_code.provider.id", providerID),
 		attribute.String("code_code.provider.surface_id", providerSurfaceBindingID),
@@ -27,13 +27,13 @@ func startVendorObservabilityProbeSpan(ctx context.Context, providerID string, p
 	))
 }
 
-func finishVendorObservabilityProbeSpan(span trace.Span, result *VendorObservabilityProbeResult) {
+func finishVendorObservabilityProbeSpan(span trace.Span, result *ProbeResult) {
 	if span == nil || result == nil {
 		return
 	}
 
 	span.SetAttributes(
-		attribute.String("code_code.vendor.id", result.VendorID),
+		attribute.String("code_code.vendor.id", result.OwnerID),
 		attribute.String("code_code.provider.id", result.ProviderID),
 		attribute.String("code_code.provider.surface_id", result.ProviderSurfaceBindingID),
 		attribute.String("code_code.observability.outcome", string(result.Outcome)),
@@ -46,19 +46,19 @@ func finishVendorObservabilityProbeSpan(span trace.Span, result *VendorObservabi
 	}
 	if result.Reason != "" {
 		span.SetAttributes(attribute.String("code_code.observability.reason", result.Reason))
-		if result.Outcome == VendorObservabilityProbeOutcomeAuthBlocked {
+		if result.Outcome == ProbeOutcomeAuthBlocked {
 			span.SetAttributes(attribute.String("code_code.observability.auth_blocked.reason", result.Reason))
 		}
 	}
 
 	switch result.Outcome {
-	case VendorObservabilityProbeOutcomeAuthBlocked:
+	case ProbeOutcomeAuthBlocked:
 		reason := strings.TrimSpace(result.Reason)
 		if reason == "" {
 			reason = "auth_blocked"
 		}
 		recordVendorObservabilitySpanMessage(span, result.Message, reason)
-	case VendorObservabilityProbeOutcomeFailed:
+	case ProbeOutcomeFailed:
 		reason := strings.TrimSpace(result.Reason)
 		if reason == "" {
 			reason = "probe_failed"
@@ -153,18 +153,18 @@ func recordVendorObservabilityHTTPResponse(span trace.Span, statusCode int, setC
 	}
 }
 
-func (r *VendorObservabilityRunner) logVendorObservabilityProbeFailure(result *VendorObservabilityProbeResult) {
+func (r *VendorObservabilityRunner) logVendorObservabilityProbeFailure(result *ProbeResult) {
 	if r == nil || r.logger == nil || result == nil {
 		return
 	}
 	switch result.Outcome {
-	case VendorObservabilityProbeOutcomeAuthBlocked, VendorObservabilityProbeOutcomeFailed:
+	case ProbeOutcomeAuthBlocked, ProbeOutcomeFailed:
 	default:
 		return
 	}
 	r.logger.Warn(
 		"vendor observability operation failed",
-		"vendor_id", result.VendorID,
+		"vendor_id", result.OwnerID,
 		"provider_id", result.ProviderID,
 		"provider_surface_binding_id", result.ProviderSurfaceBindingID,
 		"outcome", string(result.Outcome),

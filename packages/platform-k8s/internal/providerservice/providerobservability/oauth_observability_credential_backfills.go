@@ -8,17 +8,6 @@ import (
 	observabilityv1 "code-code.internal/go-contract/observability/v1"
 )
 
-func (r *OAuthObservabilityRunner) mergeCredentialBackfills(
-	ctx context.Context,
-	credentialID string,
-	rules []CredentialBackfillRule,
-	values map[string]string,
-) error {
-	if r == nil {
-		return nil
-	}
-	return mergeCredentialBackfills(ctx, r.credentialMerger, credentialID, rules, values)
-}
 
 func mergeCredentialBackfills(
 	ctx context.Context,

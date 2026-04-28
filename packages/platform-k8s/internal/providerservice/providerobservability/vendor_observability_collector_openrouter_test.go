@@ -20,7 +20,7 @@ func (t *openrouterRewriteTransport) RoundTrip(req *http.Request) (*http.Respons
 	return http.DefaultTransport.RoundTrip(req)
 }
 
-func TestOpenRouterVendorObservabilityCollectorCollect(t *testing.T) {
+func TestOpenRouterObservabilityCollectorCollect(t *testing.T) {
 	var authHeader string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader = r.Header.Get("Authorization")
@@ -58,9 +58,9 @@ func TestOpenRouterVendorObservabilityCollectorCollect(t *testing.T) {
 		Timeout:   2 * time.Second,
 	}
 
-	collector := NewOpenRouterVendorObservabilityCollector()
-	result, err := collector.Collect(context.Background(), VendorObservabilityCollectInput{
-		VendorID:                 "openrouter",
+	collector := NewOpenRouterObservabilityCollector()
+	result, err := collector.Collect(context.Background(), ObservabilityCollectInput{
+		OwnerID:                 "openrouter",
 		ProviderID:               "acc123",
 		ProviderSurfaceBindingID: "inst123",
 		APIKey:                   "sk-or-v1-mockapikey123",

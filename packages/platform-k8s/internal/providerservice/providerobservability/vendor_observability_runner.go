@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
-	"code-code.internal/go-contract/domainerror"
 	providerv1 "code-code.internal/go-contract/provider/v1"
 	"code-code.internal/platform-k8s/internal/providerservice/providers"
 	vendorsupport "code-code.internal/platform-k8s/internal/supportservice/vendors/support"
@@ -19,59 +17,22 @@ const (
 	vendorObservabilityFailureBackoff = 5 * time.Minute
 )
 
-type VendorObservabilityProbeTrigger string
-
-const (
-	VendorObservabilityProbeTriggerSchedule VendorObservabilityProbeTrigger = "schedule"
-	VendorObservabilityProbeTriggerManual   VendorObservabilityProbeTrigger = "manual"
-	VendorObservabilityProbeTriggerConnect  VendorObservabilityProbeTrigger = "connect"
-)
-
-type VendorObservabilityProbeOutcome string
-
-const (
-	VendorObservabilityProbeOutcomeExecuted    VendorObservabilityProbeOutcome = "executed"
-	VendorObservabilityProbeOutcomeThrottled   VendorObservabilityProbeOutcome = "throttled"
-	VendorObservabilityProbeOutcomeAuthBlocked VendorObservabilityProbeOutcome = "auth_blocked"
-	VendorObservabilityProbeOutcomeUnsupported VendorObservabilityProbeOutcome = "unsupported"
-	VendorObservabilityProbeOutcomeFailed      VendorObservabilityProbeOutcome = "failed"
-)
-
-type VendorObservabilityProbeResult struct {
-	VendorID                 string
-	ProviderID               string
-	ProviderSurfaceBindingID string
-	Outcome                  VendorObservabilityProbeOutcome
-	Message                  string
-	Reason                   string
-	LastAttemptAt            *time.Time
-	NextAllowedAt            *time.Time
-}
-
-type vendorObservabilityState struct {
-	lastAttemptAt time.Time
-	nextAllowedAt time.Time
-}
-
 type VendorObservabilityRunner struct {
+	probeStateTracker
 	vendorSupport    *vendorsupport.ManagementService
 	credentialReader CredentialMaterialReader
 	credentialMerger CredentialMaterialValueMerger
-	collectors       map[string]VendorObservabilityCollector
+	collectors       map[string]ObservabilityCollector
 	now              func() time.Time
 	logger           *slog.Logger
-	metrics          *vendorObservabilityMetrics
 	providers        providers.Store
-
-	mu     sync.Mutex
-	states map[string]vendorObservabilityState
 }
 
 type VendorObservabilityRunnerConfig struct {
 	Providers        providers.Store
 	CredentialReader CredentialMaterialReader
 	CredentialMerger CredentialMaterialValueMerger
-	Collectors       []VendorObservabilityCollector
+	Collectors       []ObservabilityCollector
 	Logger           *slog.Logger
 	Now              func() time.Time
 }
@@ -95,15 +56,15 @@ func NewVendorObservabilityRunner(config VendorObservabilityRunnerConfig) (*Vend
 	if err != nil {
 		return nil, err
 	}
-	metrics, err := registerVendorObservabilityMetrics()
+	metrics, err := newObservabilityMetrics("gen_ai.provider.vendor.api_key", "vendor_id")
 	if err != nil {
 		return nil, err
 	}
 	collectorList := config.Collectors
 	if len(collectorList) == 0 {
-		collectorList = DefaultVendorObservabilityCollectors()
+		collectorList = DefaultVendorCollectors()
 	}
-	collectors := map[string]VendorObservabilityCollector{}
+	collectors := map[string]ObservabilityCollector{}
 	for _, collector := range collectorList {
 		if collector == nil {
 			continue
@@ -115,31 +76,30 @@ func NewVendorObservabilityRunner(config VendorObservabilityRunnerConfig) (*Vend
 		collectors[collectorID] = collector
 	}
 	return &VendorObservabilityRunner{
+		probeStateTracker: newProbeStateTracker(metrics, vendorObservabilityFailureBackoff),
 		vendorSupport:    vendorSupport,
 		credentialReader: config.CredentialReader,
 		credentialMerger: config.CredentialMerger,
 		collectors:       collectors,
 		now:              config.Now,
 		logger:           config.Logger,
-		metrics:          metrics,
 		providers:        config.Providers,
-		states:           map[string]vendorObservabilityState{},
 	}, nil
 }
 
-func (r *VendorObservabilityRunner) ProbeProvider(ctx context.Context, providerID string, trigger VendorObservabilityProbeTrigger) (*VendorObservabilityProbeResult, error) {
+func (r *VendorObservabilityRunner) ProbeProvider(ctx context.Context, providerID string, trigger Trigger) (*ProbeResult, error) {
 	trimmedID := strings.TrimSpace(providerID)
 	if trimmedID == "" {
 		return nil, fmt.Errorf("providerobservability: vendor observability provider id is empty")
 	}
-	surface, err := r.providerProbeSurface(ctx, trimmedID)
+	surface, err := findProbeSurface(ctx, r.providers, trimmedID, "vendor", vendorProviderProbeSurfaceSupported)
 	if err != nil {
 		return nil, err
 	}
 	if surface == nil {
-		result := &VendorObservabilityProbeResult{
+		result := &ProbeResult{
 			ProviderID: trimmedID,
-			Outcome:    VendorObservabilityProbeOutcomeUnsupported,
+			Outcome:    ProbeOutcomeUnsupported,
 			Message:    "provider has no supported vendor observability surface",
 		}
 		return r.recordProbeResult(result, trigger, r.now().UTC(), vendorObservabilityFailureBackoff), nil
@@ -147,20 +107,10 @@ func (r *VendorObservabilityRunner) ProbeProvider(ctx context.Context, providerI
 	return r.probeProvider(ctx, trimmedID, surface, trigger)
 }
 
-func (r *VendorObservabilityRunner) ProbeAllDue(ctx context.Context, trigger VendorObservabilityProbeTrigger) error {
-	items, err := providers.ListSurfaceBindingProjections(ctx, r.providers)
+func (r *VendorObservabilityRunner) ProbeAllDue(ctx context.Context, trigger Trigger) error {
+	targets, err := collectDueTargets(ctx, r.providers, vendorProviderProbeSurfaceSupported)
 	if err != nil {
 		return err
-	}
-	targets := map[string]*providerv1.ProviderSurfaceBinding{}
-	for _, item := range items {
-		providerID := vendorProjectionProviderID(&item)
-		if providerID == "" || targets[providerID] != nil {
-			continue
-		}
-		if vendorProviderProbeSurfaceSupported(item.Surface) {
-			targets[providerID] = item.Surface
-		}
 	}
 	now := r.now().UTC()
 	for providerID, surface := range targets {
@@ -178,37 +128,6 @@ func (r *VendorObservabilityRunner) ProbeAllDue(ctx context.Context, trigger Ven
 	return nil
 }
 
-func (r *VendorObservabilityRunner) providerProbeSurface(ctx context.Context, providerID string) (*providerv1.ProviderSurfaceBinding, error) {
-	items, err := providers.ListSurfaceBindingProjections(ctx, r.providers)
-	if err != nil {
-		return nil, err
-	}
-	found := false
-	for _, item := range items {
-		if vendorProjectionProviderID(&item) != providerID {
-			continue
-		}
-		found = true
-		if vendorProviderProbeSurfaceSupported(item.Surface) {
-			return item.Surface, nil
-		}
-	}
-	if !found {
-		return nil, domainerror.NewNotFound("providerobservability: vendor observability provider %q not found", providerID)
-	}
-	return nil, nil
-}
-
-func vendorProjectionProviderID(item *providers.SurfaceBindingProjection) string {
-	if item == nil {
-		return ""
-	}
-	if id := strings.TrimSpace(item.Provider.GetProviderId()); id != "" {
-		return id
-	}
-	return ""
-}
-
 func vendorProviderProbeSurfaceSupported(surface *providerv1.ProviderSurfaceBinding) bool {
 	if surface == nil || surface.GetRuntime() == nil {
 		return false
@@ -216,3 +135,4 @@ func vendorProviderProbeSurfaceSupported(surface *providerv1.ProviderSurfaceBind
 	return providerv1.RuntimeKind(surface.GetRuntime()) == providerv1.ProviderSurfaceKind_PROVIDER_SURFACE_KIND_API &&
 		vendorOwnerID(surface) != ""
 }
+

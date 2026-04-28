@@ -16,7 +16,7 @@ func TestVendorObservabilityMetricsRecordAuthUsable(t *testing.T) {
 	metrics, reader := newTestVendorObservabilityMetrics(t)
 	now := time.Unix(1700000000, 0).UTC()
 
-	metrics.record("cerebras", "account-a", VendorObservabilityProbeTriggerManual, VendorObservabilityProbeOutcomeExecuted, "", now, now.Add(time.Minute))
+	metrics.record("cerebras", "account-a", TriggerManual, ProbeOutcomeExecuted, "", now, now.Add(time.Minute))
 	if got := observedMetricValue(t, reader, "vendor.auth.usable.test"); got != 1 {
 		t.Fatalf("authUsable after executed = %v, want 1", got)
 	}
@@ -28,7 +28,7 @@ func TestVendorObservabilityMetricsRecordAuthUsable(t *testing.T) {
 	}
 
 	authBlockedAt := now.Add(time.Minute)
-	metrics.record("cerebras", "account-a", VendorObservabilityProbeTriggerManual, VendorObservabilityProbeOutcomeAuthBlocked, "SESSION_COOKIE_INVALID", authBlockedAt, authBlockedAt.Add(time.Minute))
+	metrics.record("cerebras", "account-a", TriggerManual, ProbeOutcomeAuthBlocked, "SESSION_COOKIE_INVALID", authBlockedAt, authBlockedAt.Add(time.Minute))
 	if got := observedMetricValue(t, reader, "vendor.auth.usable.test"); got != 0 {
 		t.Fatalf("authUsable after auth_blocked = %v, want 0", got)
 	}
@@ -40,7 +40,7 @@ func TestVendorObservabilityMetricsRecordAuthUsable(t *testing.T) {
 	}
 
 	failedAt := authBlockedAt.Add(time.Minute)
-	metrics.record("cerebras", "account-a", VendorObservabilityProbeTriggerManual, VendorObservabilityProbeOutcomeFailed, "", failedAt, failedAt.Add(time.Minute))
+	metrics.record("cerebras", "account-a", TriggerManual, ProbeOutcomeFailed, "", failedAt, failedAt.Add(time.Minute))
 	if got := observedMetricValue(t, reader, "vendor.auth.usable.test"); got != 0 {
 		t.Fatalf("authUsable after failed = %v, want previous 0", got)
 	}
@@ -56,7 +56,7 @@ func TestVendorCollectedGaugeRecordsOTelAttributeSets(t *testing.T) {
 	t.Parallel()
 
 	metrics, reader := newTestVendorObservabilityMetrics(t)
-	metrics.recordCollectorValues("cerebras", "account-a", []VendorObservabilityMetricRow{{
+	metrics.recordCollectorValues("cerebras", "account-a", []ObservabilityMetricRow{{
 		MetricName: "gen_ai.provider.quota.limit.test",
 		Value:      100,
 		Labels: map[string]string{
@@ -66,7 +66,7 @@ func TestVendorCollectedGaugeRecordsOTelAttributeSets(t *testing.T) {
 			"window":   "day",
 		},
 	}})
-	metrics.recordCollectorValues("minimax", "account-b", []VendorObservabilityMetricRow{{
+	metrics.recordCollectorValues("minimax", "account-b", []ObservabilityMetricRow{{
 		MetricName: "gen_ai.provider.quota.limit.test",
 		Value:      10,
 		Labels: map[string]string{
@@ -100,10 +100,11 @@ func TestVendorCollectedGaugeRecordsOTelAttributeSets(t *testing.T) {
 	}
 }
 
-func newTestVendorObservabilityMetrics(t *testing.T) (*vendorObservabilityMetrics, *sdkmetric.ManualReader) {
+func newTestVendorObservabilityMetrics(t *testing.T) (*observabilityMetrics, *sdkmetric.ManualReader) {
 	t.Helper()
 	meter, reader := newTestMeter(t)
-	return &vendorObservabilityMetrics{
+	return &observabilityMetrics{
+		ownerLabel:         "vendor_id",
 		meter:              meter,
 		probeRuns:          mustTestCounter(t, meter, "vendor.probe.runs.test"),
 		probeLastRun:       mustTestGauge(t, meter, "vendor.probe.last.run.test"),
@@ -113,7 +114,7 @@ func newTestVendorObservabilityMetrics(t *testing.T) (*vendorObservabilityMetric
 		authUsable:         mustTestGauge(t, meter, "vendor.auth.usable.test"),
 		credentialLastUsed: mustTestGauge(t, meter, "vendor.credential.last.used.test"),
 		lastReasons:        map[string]string{},
-		collectedGauges:    map[string]vendorCollectedGauge{},
+		collectedGauges:    map[string]collectedGauge{},
 	}, reader
 }
 
@@ -150,7 +151,8 @@ func attributeSet(attrs []attribute.KeyValue) map[string]string {
 func TestSanitizeVendorCollectorLabelsDropsInstanceLabels(t *testing.T) {
 	t.Parallel()
 
-	labels := sanitizeVendorCollectorLabels(map[string]string{
+	m := &observabilityMetrics{ownerLabel: "vendor_id"}
+	labels := m.sanitizeCollectorLabels(map[string]string{
 		"provider_surface_binding_id": "instance-1",
 		"instance_id":                 "instance-1",
 		"model_id":                    "gemini-2.5-pro",

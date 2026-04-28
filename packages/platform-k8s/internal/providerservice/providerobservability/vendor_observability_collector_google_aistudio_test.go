@@ -181,7 +181,7 @@ func TestParseGoogleAIStudioRateLimitsSupportsGemmaModels(t *testing.T) {
 	}
 }
 
-func TestGoogleAIStudioVendorObservabilityCollectorCollect(t *testing.T) {
+func TestGoogleAIStudioObservabilityCollectorCollect(t *testing.T) {
 	var authHeader string
 	requestBodies := map[string]string{}
 	var metricTimeSeriesBodies []string
@@ -308,11 +308,11 @@ func TestGoogleAIStudioVendorObservabilityCollectorCollect(t *testing.T) {
 		googleAIStudioRPCBaseURL = previousBaseURL
 	}()
 
-	collector := &googleAIStudioVendorObservabilityCollector{
+	collector := &googleAIStudioObservabilityCollector{
 		now: func() time.Time { return time.Unix(1718000000, 0) },
 	}
-	result, err := collector.Collect(context.Background(), VendorObservabilityCollectInput{
-		VendorID:                 "google",
+	result, err := collector.Collect(context.Background(), ObservabilityCollectInput{
+		OwnerID:                 "google",
 		ProviderID:               "account-google",
 		ProviderSurfaceBindingID: "instance-google",
 		ObservabilityCredential: &credentialv1.ResolvedCredential{
@@ -446,7 +446,7 @@ func requireCookieHeaderContains(t *testing.T, header string, pairs ...string) {
 	}
 }
 
-func TestGoogleAIStudioVendorObservabilityCollectorCollectSkipsProjectLookupForNumericProjectID(t *testing.T) {
+func TestGoogleAIStudioObservabilityCollectorCollectSkipsProjectLookupForNumericProjectID(t *testing.T) {
 	t.Parallel()
 
 	requestBodies := map[string]string{}
@@ -501,11 +501,11 @@ func TestGoogleAIStudioVendorObservabilityCollectorCollectSkipsProjectLookupForN
 		googleAIStudioRPCBaseURL = previousBaseURL
 	}()
 
-	collector := &googleAIStudioVendorObservabilityCollector{
+	collector := &googleAIStudioObservabilityCollector{
 		now: func() time.Time { return time.Unix(1718000000, 0) },
 	}
-	result, err := collector.Collect(context.Background(), VendorObservabilityCollectInput{
-		VendorID:                 "google",
+	result, err := collector.Collect(context.Background(), ObservabilityCollectInput{
+		OwnerID:                 "google",
 		ProviderID:               "account-google",
 		ProviderSurfaceBindingID: "instance-google",
 		ObservabilityCredential: &credentialv1.ResolvedCredential{

@@ -6,14 +6,14 @@ import (
 	"strings"
 )
 
-func parseMinimaxRemainsGaugeRows(body []byte) ([]VendorObservabilityMetricRow, error) {
+func parseMinimaxRemainsGaugeRows(body []byte) ([]ObservabilityMetricRow, error) {
 	payload := map[string]any{}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, fmt.Errorf("providerobservability: decode minimax remains response: %w", err)
 	}
 	if statusCode, statusMessage, ok := minimaxBaseResponse(payload); ok && statusCode != 0 {
 		if minimaxUnauthorizedMessage(statusMessage) {
-			return nil, unauthorizedVendorObservabilityError(
+			return nil, unauthorizedObservabilityError(
 				fmt.Sprintf("minimax remains unauthorized: base_resp status_code=%d status_msg=%q", statusCode, statusMessage),
 			)
 		}
@@ -23,7 +23,7 @@ func parseMinimaxRemainsGaugeRows(body []byte) ([]VendorObservabilityMetricRow, 
 	if len(entries) == 0 {
 		return nil, fmt.Errorf("providerobservability: minimax remains response does not include model_remains")
 	}
-	rows := make([]VendorObservabilityMetricRow, 0, len(entries)*4)
+	rows := make([]ObservabilityMetricRow, 0, len(entries)*4)
 	for _, entry := range entries {
 		modelID := minimaxQuotaModelID(entry)
 		if modelID == "" {
@@ -40,28 +40,28 @@ func parseMinimaxRemainsGaugeRows(body []byte) ([]VendorObservabilityMetricRow, 
 		resetTimestamp, hasResetTimestamp := minimaxResetTimestamp(entry)
 
 		if hasRemaining {
-			rows = append(rows, VendorObservabilityMetricRow{
+			rows = append(rows, ObservabilityMetricRow{
 				MetricName: minimaxTextRemainingCountMetric,
 				Labels:     labels,
 				Value:      remainingCount,
 			})
 		}
 		if hasTotal {
-			rows = append(rows, VendorObservabilityMetricRow{
+			rows = append(rows, ObservabilityMetricRow{
 				MetricName: minimaxTextTotalCountMetric,
 				Labels:     labels,
 				Value:      totalCount,
 			})
 		}
 		if hasPercent {
-			rows = append(rows, VendorObservabilityMetricRow{
+			rows = append(rows, ObservabilityMetricRow{
 				MetricName: minimaxTextRemainingPercentMetric,
 				Labels:     labels,
 				Value:      percent,
 			})
 		}
 		if hasResetTimestamp {
-			rows = append(rows, VendorObservabilityMetricRow{
+			rows = append(rows, ObservabilityMetricRow{
 				MetricName: minimaxTextResetTimestampMetric,
 				Labels:     labels,
 				Value:      resetTimestamp,

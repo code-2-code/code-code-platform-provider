@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestCodexOAuthObservabilityCollectorCollectUsage(t *testing.T) {
+func TestCodexObservabilityCollectorCollectUsage(t *testing.T) {
 	previousURL := codexUsageProbeURL
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got, want := r.Header.Get("Authorization"), "Bearer access-token"; got != want {
@@ -26,8 +26,8 @@ func TestCodexOAuthObservabilityCollectorCollectUsage(t *testing.T) {
 	codexUsageProbeURL = server.URL
 	defer func() { codexUsageProbeURL = previousURL }()
 
-	collector := NewCodexOAuthObservabilityCollector()
-	result, err := collector.Collect(context.Background(), OAuthObservabilityCollectInput{
+	collector := NewCodexObservabilityCollector()
+	result, err := collector.Collect(context.Background(), ObservabilityCollectInput{
 		AccessToken:            "access-token",
 		HTTPClient:             server.Client(),
 		ObservabilityUserAgent: "codex_cli_rs/0.121.0",
@@ -78,21 +78,21 @@ func TestCodexUsageLimitGaugeValuesFallback429(t *testing.T) {
 	}
 }
 
-func TestCodexOAuthObservabilityCollectorRequiresAccountID(t *testing.T) {
-	collector := NewCodexOAuthObservabilityCollector()
-	_, err := collector.Collect(context.Background(), OAuthObservabilityCollectInput{
+func TestCodexObservabilityCollectorRequiresAccountID(t *testing.T) {
+	collector := NewCodexObservabilityCollector()
+	_, err := collector.Collect(context.Background(), ObservabilityCollectInput{
 		AccessToken: "access-token",
 		HTTPClient:  http.DefaultClient,
 	})
 	if err == nil {
 		t.Fatal("Collect() error = nil, want error")
 	}
-	if !isOAuthObservabilityUnauthorizedError(err) {
+	if !isObservabilityUnauthorizedError(err) {
 		t.Fatalf("Collect() error = %T, want unauthorized error", err)
 	}
 }
 
-func metricRowValue(rows []OAuthObservabilityMetricRow, metricName string) float64 {
+func metricRowValue(rows []ObservabilityMetricRow, metricName string) float64 {
 	for _, row := range rows {
 		if row.MetricName == metricName {
 			return row.Value

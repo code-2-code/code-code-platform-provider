@@ -21,26 +21,26 @@ const (
 var googleAIStudioRPCBaseURL = "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService"
 
 func init() {
-	registerVendorObservabilityCollectorFactory(googleAIStudioCollectorID, NewGoogleAIStudioVendorObservabilityCollector)
+	registerVendorCollectorFactory(googleAIStudioCollectorID, NewGoogleAIStudioObservabilityCollector)
 }
 
-func NewGoogleAIStudioVendorObservabilityCollector() VendorObservabilityCollector {
-	return &googleAIStudioVendorObservabilityCollector{now: time.Now}
+func NewGoogleAIStudioObservabilityCollector() ObservabilityCollector {
+	return &googleAIStudioObservabilityCollector{now: time.Now}
 }
 
-type googleAIStudioVendorObservabilityCollector struct {
+type googleAIStudioObservabilityCollector struct {
 	now func() time.Time
 }
 
-func (c *googleAIStudioVendorObservabilityCollector) CollectorID() string {
+func (c *googleAIStudioObservabilityCollector) CollectorID() string {
 	return googleAIStudioCollectorID
 }
 
-func (c *googleAIStudioVendorObservabilityCollector) AuthAdapterID() string {
+func (c *googleAIStudioObservabilityCollector) AuthAdapterID() string {
 	return egressauth.AuthAdapterGoogleAIStudioSessionID
 }
 
-func (c *googleAIStudioVendorObservabilityCollector) Collect(ctx context.Context, input VendorObservabilityCollectInput) (result *VendorObservabilityCollectResult, err error) {
+func (c *googleAIStudioObservabilityCollector) Collect(ctx context.Context, input ObservabilityCollectInput) (result *ObservabilityCollectResult, err error) {
 	ctx, span := startVendorObservabilityCollectSpan(ctx, c.CollectorID())
 	defer func() {
 		finishVendorObservabilityCollectSpan(span, err)
@@ -67,7 +67,7 @@ func (c *googleAIStudioVendorObservabilityCollector) Collect(ctx context.Context
 		origin = googleAIStudioDefaultOrigin
 	}
 	if cookieHeader == "" || pageAPIKey == "" || projectID == "" {
-		return nil, unauthorizedVendorObservabilityError("google ai studio quotas: cookie, page_api_key, and project_id are required")
+		return nil, unauthorizedObservabilityError("google ai studio quotas: cookie, page_api_key, and project_id are required")
 	}
 	now := c.now().UTC()
 	authHeader := requestAuthorization
@@ -77,7 +77,7 @@ func (c *googleAIStudioVendorObservabilityCollector) Collect(ctx context.Context
 		} else {
 			authHeader, err = googleAIStudioAuthorizationHeader(cookieHeader, origin, now)
 			if err != nil {
-				return nil, unauthorizedVendorObservabilityError(err.Error())
+				return nil, unauthorizedObservabilityError(err.Error())
 			}
 		}
 	}
@@ -162,7 +162,7 @@ func (c *googleAIStudioVendorObservabilityCollector) Collect(ctx context.Context
 	}
 	models, err = c.enrichGoogleAIStudioMetricTimeSeriesRows(ctx, input.HTTPClient, metricTimeSeriesInput, models)
 	if err != nil {
-		if isVendorObservabilityUnauthorizedError(err) {
+		if isObservabilityUnauthorizedError(err) {
 			return nil, err
 		}
 	}
@@ -170,7 +170,7 @@ func (c *googleAIStudioVendorObservabilityCollector) Collect(ctx context.Context
 	if len(rows) == 0 {
 		return nil, fmt.Errorf("providerobservability: google ai studio quotas: no quota data collected")
 	}
-	return &VendorObservabilityCollectResult{
+	return &ObservabilityCollectResult{
 		GaugeRows: rows,
 	}, nil
 }

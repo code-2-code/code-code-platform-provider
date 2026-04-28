@@ -196,7 +196,7 @@ func TestCerebrasParseInt64(t *testing.T) {
 }
 
 func TestCerebrasCollectorRefreshesSessionTokenAcrossRequests(t *testing.T) {
-	collector := NewCerebrasVendorObservabilityCollector()
+	collector := NewCerebrasObservabilityCollector()
 	client := &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			bodyBytes, err := io.ReadAll(req.Body)
@@ -234,7 +234,7 @@ func TestCerebrasCollectorRefreshesSessionTokenAcrossRequests(t *testing.T) {
 		}),
 	}
 
-	result, err := collector.Collect(context.Background(), VendorObservabilityCollectInput{
+	result, err := collector.Collect(context.Background(), ObservabilityCollectInput{
 		ObservabilityCredential: testCerebrasSessionCredential("token-1"),
 		CredentialBackfills: []CredentialBackfillRule{{
 			RuleID:     "authjs-session-token",
@@ -255,21 +255,21 @@ func TestCerebrasCollectorRefreshesSessionTokenAcrossRequests(t *testing.T) {
 }
 
 func TestCerebrasCollectorReportsInvalidOrExpiredSessionToken(t *testing.T) {
-	collector := NewCerebrasVendorObservabilityCollector()
+	collector := NewCerebrasObservabilityCollector()
 	client := &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			return newRoundTripResponse(http.StatusUnauthorized, `expired session`, ""), nil
 		}),
 	}
 
-	_, err := collector.Collect(context.Background(), VendorObservabilityCollectInput{
+	_, err := collector.Collect(context.Background(), ObservabilityCollectInput{
 		ObservabilityCredential: testCerebrasSessionCredential("token-1"),
 		HTTPClient:              client,
 	})
 	if err == nil {
 		t.Fatal("Collect() error = nil, want unauthorized error")
 	}
-	if !isVendorObservabilityUnauthorizedError(err) {
+	if !isObservabilityUnauthorizedError(err) {
 		t.Fatalf("Collect() unauthorized = false, err=%v", err)
 	}
 	if got := err.Error(); !strings.Contains(got, "authjs.session-token is invalid or expired") {
@@ -278,7 +278,7 @@ func TestCerebrasCollectorReportsInvalidOrExpiredSessionToken(t *testing.T) {
 }
 
 func TestCerebrasCollectorSkipsOrganizationsWhoseQuotaQueryFails(t *testing.T) {
-	collector := NewCerebrasVendorObservabilityCollector()
+	collector := NewCerebrasObservabilityCollector()
 	client := &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			bodyBytes, err := io.ReadAll(req.Body)
@@ -302,7 +302,7 @@ func TestCerebrasCollectorSkipsOrganizationsWhoseQuotaQueryFails(t *testing.T) {
 		}),
 	}
 
-	result, err := collector.Collect(context.Background(), VendorObservabilityCollectInput{
+	result, err := collector.Collect(context.Background(), ObservabilityCollectInput{
 		ObservabilityCredential: testCerebrasSessionCredential("token-1"),
 		HTTPClient:              client,
 	})
@@ -320,7 +320,7 @@ func TestCerebrasCollectorSkipsOrganizationsWhoseQuotaQueryFails(t *testing.T) {
 }
 
 func TestCerebrasCollectorFailsWhenEveryOrganizationQuotaQueryFails(t *testing.T) {
-	collector := NewCerebrasVendorObservabilityCollector()
+	collector := NewCerebrasObservabilityCollector()
 	client := &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			bodyBytes, err := io.ReadAll(req.Body)
@@ -340,7 +340,7 @@ func TestCerebrasCollectorFailsWhenEveryOrganizationQuotaQueryFails(t *testing.T
 		}),
 	}
 
-	_, err := collector.Collect(context.Background(), VendorObservabilityCollectInput{
+	_, err := collector.Collect(context.Background(), ObservabilityCollectInput{
 		ObservabilityCredential: testCerebrasSessionCredential("token-1"),
 		HTTPClient:              client,
 	})
@@ -357,8 +357,8 @@ func TestCerebrasGraphQLResponseErrorTreatsSessionErrorsAsUnauthorized(t *testin
 	if err == nil {
 		t.Fatal("cerebrasGraphQLResponseError() error = nil, want unauthorized error")
 	}
-	if !isVendorObservabilityUnauthorizedError(err) {
-		t.Fatalf("isVendorObservabilityUnauthorizedError() = false, err=%v", err)
+	if !isObservabilityUnauthorizedError(err) {
+		t.Fatalf("isObservabilityUnauthorizedError() = false, err=%v", err)
 	}
 }
 
@@ -367,8 +367,8 @@ func TestCerebrasGraphQLResponseErrorTreatsLoggedInErrorsAsUnauthorized(t *testi
 	if err == nil {
 		t.Fatal("cerebrasGraphQLResponseError() error = nil, want unauthorized error")
 	}
-	if !isVendorObservabilityUnauthorizedError(err) {
-		t.Fatalf("isVendorObservabilityUnauthorizedError() = false, err=%v", err)
+	if !isObservabilityUnauthorizedError(err) {
+		t.Fatalf("isObservabilityUnauthorizedError() = false, err=%v", err)
 	}
 }
 

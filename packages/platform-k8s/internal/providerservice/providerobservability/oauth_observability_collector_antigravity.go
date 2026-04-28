@@ -25,23 +25,23 @@ var antigravityFetchAvailableModelsURLs = []string{
 	"https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
 }
 
-func NewAntigravityOAuthObservabilityCollector() OAuthObservabilityCollector {
-	return &antigravityOAuthObservabilityCollector{}
+func NewAntigravityObservabilityCollector() ObservabilityCollector {
+	return &antigravityObservabilityCollector{}
 }
 
 func init() {
-	registerOAuthObservabilityCollectorFactory("antigravity", NewAntigravityOAuthObservabilityCollector)
+	registerOAuthCollectorFactory("antigravity", NewAntigravityObservabilityCollector)
 }
 
-type antigravityOAuthObservabilityCollector struct{}
+type antigravityObservabilityCollector struct{}
 
-func (c *antigravityOAuthObservabilityCollector) CollectorID() string {
+func (c *antigravityObservabilityCollector) CollectorID() string {
 	return "antigravity"
 }
 
-func (c *antigravityOAuthObservabilityCollector) Collect(ctx context.Context, input OAuthObservabilityCollectInput) (*OAuthObservabilityCollectResult, error) {
+func (c *antigravityObservabilityCollector) Collect(ctx context.Context, input ObservabilityCollectInput) (*ObservabilityCollectResult, error) {
 	if strings.TrimSpace(input.AccessToken) == "" {
-		return nil, unauthorizedOAuthObservabilityError("antigravity access token is empty")
+		return nil, unauthorizedObservabilityError("antigravity access token is empty")
 	}
 	projectID := strings.TrimSpace(input.MaterialValues[materialKeyProjectID])
 	codeAssistPayload, err := codeassist.LoadAntigravityCodeAssistWithProject(ctx, input.HTTPClient, input.AccessToken, projectID)
@@ -77,7 +77,7 @@ func (c *antigravityOAuthObservabilityCollector) Collect(ctx context.Context, in
 	if tierName != "" {
 		backfillValues[materialKeyTierName] = tierName
 	}
-	return &OAuthObservabilityCollectResult{
+	return &ObservabilityCollectResult{
 		GaugeRows:                antigravityQuotaRows(payload),
 		CredentialBackfillValues: backfillValues,
 	}, nil
@@ -121,7 +121,7 @@ func decodeAntigravityQuotaResponse(response *http.Response) (map[string]any, bo
 		return nil, true, fmt.Errorf("providerobservability: read antigravity fetchAvailableModels response: %w", err)
 	}
 	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
-		return nil, true, unauthorizedOAuthObservabilityError(
+		return nil, true, unauthorizedObservabilityError(
 			fmt.Sprintf("antigravity fetchAvailableModels unauthorized: status %d %s", response.StatusCode, strings.TrimSpace(string(bodyBytes))),
 		)
 	}
@@ -141,12 +141,12 @@ func decodeAntigravityQuotaResponse(response *http.Response) (map[string]any, bo
 	return parsed, true, nil
 }
 
-func antigravityQuotaRows(payload map[string]any) []OAuthObservabilityMetricRow {
+func antigravityQuotaRows(payload map[string]any) []ObservabilityMetricRow {
 	models, _ := payload["models"].(map[string]any)
 	if len(models) == 0 {
 		return nil
 	}
-	rows := make([]OAuthObservabilityMetricRow, 0, len(models)*2)
+	rows := make([]ObservabilityMetricRow, 0, len(models)*2)
 	for modelID, raw := range models {
 		trimmedModelID := strings.TrimSpace(modelID)
 		if !antigravityQuotaModelSupported(trimmedModelID) {
@@ -159,14 +159,14 @@ func antigravityQuotaRows(payload map[string]any) []OAuthObservabilityMetricRow 
 		}
 		labels := map[string]string{"model_id": trimmedModelID}
 		if percent, ok := quotaInfo["remainingFraction"].(float64); ok {
-			rows = append(rows, OAuthObservabilityMetricRow{
+			rows = append(rows, ObservabilityMetricRow{
 				MetricName: antigravityQuotaRemainingPercentMetric,
 				Labels:     labels,
 				Value:      clampPercent(percent * 100),
 			})
 		}
 		if resetAt, ok := parseRFC3339Timestamp(quotaInfo["resetTime"]); ok {
-			rows = append(rows, OAuthObservabilityMetricRow{
+			rows = append(rows, ObservabilityMetricRow{
 				MetricName: antigravityQuotaResetTimestampMetric,
 				Labels:     labels,
 				Value:      float64(resetAt.Unix()),

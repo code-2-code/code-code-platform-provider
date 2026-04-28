@@ -148,76 +148,19 @@ func sortedUniqueStrings(values []string) []string {
 	return out
 }
 
-func (r *OAuthObservabilityRunner) throttled(providerID string, providerSurfaceBindingID string, now time.Time) (bool, time.Time) {
-	stateKey := oauthObservabilityStateKey(providerID, providerSurfaceBindingID)
-	if stateKey == "" {
-		return false, time.Time{}
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	state, ok := r.states[stateKey]
-	if !ok || state.nextAllowedAt.IsZero() {
-		return false, time.Time{}
-	}
-	if now.Before(state.nextAllowedAt) {
-		return true, state.nextAllowedAt
-	}
-	return false, state.nextAllowedAt
-}
-
-func (r *OAuthObservabilityRunner) nextAllowed(providerID string, providerSurfaceBindingID string) time.Time {
-	stateKey := oauthObservabilityStateKey(providerID, providerSurfaceBindingID)
-	if stateKey == "" {
-		return time.Time{}
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	state, ok := r.states[stateKey]
-	if !ok {
-		return time.Time{}
-	}
-	return state.nextAllowedAt
-}
-
 func (r *OAuthObservabilityRunner) recordProbeResult(
-	result *OAuthObservabilityProbeResult,
-	trigger OAuthObservabilityProbeTrigger,
+	result *ProbeResult,
+	trigger Trigger,
 	cliID string,
 	now time.Time,
 	backoff time.Duration,
-) *OAuthObservabilityProbeResult {
+) *ProbeResult {
 	if result == nil {
 		return nil
 	}
-	if strings.TrimSpace(result.CLIID) == "" {
-		result.CLIID = strings.TrimSpace(cliID)
+	if strings.TrimSpace(result.OwnerID) == "" {
+		result.OwnerID = strings.TrimSpace(cliID)
 	}
-	if backoff <= 0 {
-		backoff = oauthObservabilityFailureBackoff
-	}
-	nextAllowedAt := now.Add(backoff)
-	stateKey := oauthObservabilityStateKey(result.ProviderID, result.ProviderSurfaceBindingID)
-	if stateKey == "" {
-		stateKey = oauthObservabilityStateKey("", result.ProviderSurfaceBindingID)
-	}
-	r.mu.Lock()
-	r.states[stateKey] = oauthObservabilityState{
-		lastAttemptAt: now,
-		nextAllowedAt: nextAllowedAt,
-	}
-	r.mu.Unlock()
-	result.LastAttemptAt = timePointerCopy(&now)
-	result.NextAllowedAt = timePointerCopy(&nextAllowedAt)
-	r.metrics.record(result.CLIID, result.ProviderID, trigger, result.Outcome, result.Reason, now, nextAllowedAt)
-	return result
+	return r.recordState(result, trigger, now, backoff)
 }
 
-func oauthObservabilityStateKey(providerID string, providerSurfaceBindingID string) string {
-	if providerID := strings.TrimSpace(providerID); providerID != "" {
-		return "provider:" + providerID
-	}
-	if surfaceID := strings.TrimSpace(providerSurfaceBindingID); surfaceID != "" {
-		return "surface:" + surfaceID
-	}
-	return ""
-}

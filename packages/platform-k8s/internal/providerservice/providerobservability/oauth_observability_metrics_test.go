@@ -16,7 +16,7 @@ func TestOAuthObservabilityMetricsRecordAuthUsable(t *testing.T) {
 	metrics, reader := newTestOAuthObservabilityMetrics(t)
 	now := time.Unix(1700000000, 0).UTC()
 
-	metrics.record("gemini", "account-a", OAuthObservabilityProbeTriggerManual, OAuthObservabilityProbeOutcomeExecuted, "", now, now.Add(time.Minute))
+	metrics.record("gemini", "account-a", TriggerManual, ProbeOutcomeExecuted, "", now, now.Add(time.Minute))
 	if got := observedMetricValue(t, reader, "oauth.auth.usable.test"); got != 1 {
 		t.Fatalf("authUsable after executed = %v, want 1", got)
 	}
@@ -28,7 +28,7 @@ func TestOAuthObservabilityMetricsRecordAuthUsable(t *testing.T) {
 	}
 
 	authBlockedAt := now.Add(time.Minute)
-	metrics.record("gemini", "account-a", OAuthObservabilityProbeTriggerManual, OAuthObservabilityProbeOutcomeAuthBlocked, "INVALID_TOKEN", authBlockedAt, authBlockedAt.Add(time.Minute))
+	metrics.record("gemini", "account-a", TriggerManual, ProbeOutcomeAuthBlocked, "INVALID_TOKEN", authBlockedAt, authBlockedAt.Add(time.Minute))
 	if got := observedMetricValue(t, reader, "oauth.auth.usable.test"); got != 0 {
 		t.Fatalf("authUsable after auth_blocked = %v, want 0", got)
 	}
@@ -40,7 +40,7 @@ func TestOAuthObservabilityMetricsRecordAuthUsable(t *testing.T) {
 	}
 
 	failedAt := authBlockedAt.Add(time.Minute)
-	metrics.record("gemini", "account-a", OAuthObservabilityProbeTriggerManual, OAuthObservabilityProbeOutcomeFailed, "KUBERNETES_API_UNAVAILABLE", failedAt, failedAt.Add(time.Minute))
+	metrics.record("gemini", "account-a", TriggerManual, ProbeOutcomeFailed, "KUBERNETES_API_UNAVAILABLE", failedAt, failedAt.Add(time.Minute))
 	if got := observedMetricValue(t, reader, "oauth.auth.usable.test"); got != 0 {
 		t.Fatalf("authUsable after failed = %v, want previous 0", got)
 	}
@@ -52,10 +52,11 @@ func TestOAuthObservabilityMetricsRecordAuthUsable(t *testing.T) {
 	}
 }
 
-func newTestOAuthObservabilityMetrics(t *testing.T) (*oauthObservabilityMetrics, *sdkmetric.ManualReader) {
+func newTestOAuthObservabilityMetrics(t *testing.T) (*observabilityMetrics, *sdkmetric.ManualReader) {
 	t.Helper()
 	meter, reader := newTestMeter(t)
-	return &oauthObservabilityMetrics{
+	return &observabilityMetrics{
+		ownerLabel:         "cli_id",
 		meter:              meter,
 		probeRuns:          mustTestCounter(t, meter, "oauth.probe.runs.test"),
 		probeLastRun:       mustTestGauge(t, meter, "oauth.probe.last.run.test"),
@@ -65,7 +66,7 @@ func newTestOAuthObservabilityMetrics(t *testing.T) (*oauthObservabilityMetrics,
 		authUsable:         mustTestGauge(t, meter, "oauth.auth.usable.test"),
 		credentialLastUsed: mustTestGauge(t, meter, "oauth.credential.last.used.test"),
 		lastReasons:        map[string]string{},
-		collectedGauges:    map[string]oauthCollectedGauge{},
+		collectedGauges:    map[string]collectedGauge{},
 	}, reader
 }
 
@@ -136,7 +137,8 @@ func firstObservedValue(t *testing.T, name string, data metricdata.Aggregation) 
 func TestSanitizeCollectorLabelsDropsInstanceLabels(t *testing.T) {
 	t.Parallel()
 
-	labels := sanitizeCollectorLabels(map[string]string{
+	m := &observabilityMetrics{ownerLabel: "cli_id"}
+	labels := m.sanitizeCollectorLabels(map[string]string{
 		"provider_surface_binding_id": "instance-1",
 		"instance_id":                 "instance-1",
 		"model_id":                    "gemini-2.5-pro",

@@ -3,14 +3,12 @@ package providerobservability
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"strings"
 
 	credentialv1 "code-code.internal/go-contract/credential/v1"
 	authv1 "code-code.internal/go-contract/platform/auth/v1"
 	providerv1 "code-code.internal/go-contract/provider/v1"
 	"code-code.internal/platform-k8s/internal/egressauth"
-	"code-code.internal/platform-k8s/internal/platform/outboundhttp"
 	"code-code.internal/platform-k8s/internal/platform/provideridentity"
 )
 
@@ -18,18 +16,18 @@ func (r *VendorObservabilityRunner) probeProvider(
 	ctx context.Context,
 	providerID string,
 	surface *providerv1.ProviderSurfaceBinding,
-	trigger VendorObservabilityProbeTrigger,
-) (probeResult *VendorObservabilityProbeResult, err error) {
+	trigger Trigger,
+) (probeResult *ProbeResult, err error) {
 	providerID = strings.TrimSpace(providerID)
 	providerSurfaceBindingID := ""
 	if surface != nil {
 		providerSurfaceBindingID = strings.TrimSpace(surface.GetSurfaceId())
 	}
 	ctx, span := startVendorObservabilityProbeSpan(ctx, providerID, providerSurfaceBindingID, trigger)
-	result := &VendorObservabilityProbeResult{
+	result := &ProbeResult{
 		ProviderID:               providerID,
 		ProviderSurfaceBindingID: providerSurfaceBindingID,
-		Outcome:                  VendorObservabilityProbeOutcomeUnsupported,
+		Outcome:                  ProbeOutcomeUnsupported,
 	}
 	defer func() {
 		if probeResult != nil {
@@ -46,21 +44,21 @@ func (r *VendorObservabilityRunner) probeProvider(
 	if providerv1.RuntimeKind(runtime) != providerv1.ProviderSurfaceKind_PROVIDER_SURFACE_KIND_API {
 		return r.recordProbeResult(result, trigger, r.now().UTC(), vendorObservabilityFailureBackoff), nil
 	}
-	result.VendorID = vendorOwnerID(surface)
-	if result.VendorID == "" || result.ProviderID == "" {
+	result.OwnerID = vendorOwnerID(surface)
+	if result.OwnerID == "" || result.ProviderID == "" {
 		result.Message = "vendor_id or provider_id is empty"
 		return r.recordProbeResult(result, trigger, r.now().UTC(), vendorObservabilityFailureBackoff), nil
 	}
-	vendor, err := r.resolveVendor(ctx, result.VendorID)
+	vendor, err := r.resolveVendor(ctx, result.OwnerID)
 	if err != nil {
-		result.Outcome = VendorObservabilityProbeOutcomeFailed
+		result.Outcome = ProbeOutcomeFailed
 		result.Reason = observabilityFailureReasonFromError(err)
 		result.Message = err.Error()
 		return r.recordProbeResult(result, trigger, r.now().UTC(), vendorObservabilityFailureBackoff), nil
 	}
 	activeQueryPolicy, supported, err := vendorActiveQueryPolicy(vendor, providerSurfaceBindingID)
 	if err != nil {
-		result.Outcome = VendorObservabilityProbeOutcomeFailed
+		result.Outcome = ProbeOutcomeFailed
 		result.Reason = observabilityFailureReasonFromError(err)
 		result.Message = err.Error()
 		return r.recordProbeResult(result, trigger, r.now().UTC(), vendorObservabilityFailureBackoff), nil
@@ -75,13 +73,13 @@ func (r *VendorObservabilityRunner) probeProvider(
 		return r.recordProbeResult(result, trigger, r.now().UTC(), vendorObservabilityFailureBackoff), nil
 	}
 	now := r.now().UTC()
-	if trigger != VendorObservabilityProbeTriggerManual {
+	if trigger != TriggerManual {
 		if throttled, nextAllowedAt := r.throttled(result.ProviderID, providerSurfaceBindingID, now); throttled {
-			result.Outcome = VendorObservabilityProbeOutcomeThrottled
+			result.Outcome = ProbeOutcomeThrottled
 			result.Message = "operation is throttled by minimum interval"
 			result.LastAttemptAt = timePointerCopy(&now)
 			result.NextAllowedAt = timePointerCopy(&nextAllowedAt)
-			r.metrics.record(result.VendorID, result.ProviderID, trigger, result.Outcome, result.Reason, now, nextAllowedAt)
+			r.metrics.record(result.OwnerID, result.ProviderID, trigger, result.Outcome, result.Reason, now, nextAllowedAt)
 			return result, nil
 		}
 	}
@@ -95,20 +93,20 @@ func (r *VendorObservabilityRunner) probeProvider(
 		credentialID,
 		&authv1.CredentialMaterialReadPolicyRef{
 			Kind:        authv1.CredentialMaterialReadPolicyKind_CREDENTIAL_MATERIAL_READ_POLICY_KIND_VENDOR_ACTIVE_QUERY,
-			OwnerId:     result.VendorID,
+			OwnerId:     result.OwnerID,
 			SurfaceId:   providerSurfaceBindingID,
 			CollectorId: activeQueryPolicy.CollectorID,
 		},
 		activeQueryPolicy.MaterialReadFields,
 	)
 	if err != nil {
-		result.Outcome = VendorObservabilityProbeOutcomeFailed
+		result.Outcome = ProbeOutcomeFailed
 		result.Reason = observabilityFailureReasonFromError(err)
 		result.Message = err.Error()
 		return r.recordProbeResult(result, trigger, now, vendorObservabilityFailureBackoff), nil
 	}
-	httpClient, err := r.httpClient(ctx, observabilityEgressAuth{
-		VendorID:                 result.VendorID,
+	httpClient, err := observabilityHTTPClient(ctx, observabilityEgressAuth{
+		VendorID:                 result.OwnerID,
 		ProviderID:               result.ProviderID,
 		ProviderSurfaceBindingID: providerSurfaceBindingID,
 		RequestHeaderName:        "authorization",
@@ -116,13 +114,13 @@ func (r *VendorObservabilityRunner) probeProvider(
 		AuthAdapterID:            vendorObservabilityAuthAdapterID(collector),
 	})
 	if err != nil {
-		result.Outcome = VendorObservabilityProbeOutcomeFailed
+		result.Outcome = ProbeOutcomeFailed
 		result.Reason = observabilityFailureReasonFromError(err)
 		result.Message = err.Error()
 		return r.recordProbeResult(result, trigger, now, vendorObservabilityFailureBackoff), nil
 	}
-	collectResult, collectErr := collector.Collect(ctx, VendorObservabilityCollectInput{
-		VendorID:                 result.VendorID,
+	collectResult, collectErr := collector.Collect(ctx, ObservabilityCollectInput{
+		OwnerID:                 result.OwnerID,
 		ProviderID:               result.ProviderID,
 		ProviderSurfaceBindingID: providerSurfaceBindingID,
 		CredentialID:             credentialID,
@@ -133,11 +131,11 @@ func (r *VendorObservabilityRunner) probeProvider(
 		HTTPClient:               httpClient,
 	})
 	if collectErr != nil {
-		if isVendorObservabilityUnauthorizedError(collectErr) {
-			result.Outcome = VendorObservabilityProbeOutcomeAuthBlocked
-			result.Reason = vendorObservabilityUnauthorizedReason(collectErr)
+		if isObservabilityUnauthorizedError(collectErr) {
+			result.Outcome = ProbeOutcomeAuthBlocked
+			result.Reason = observabilityUnauthorizedReason(collectErr)
 		} else {
-			result.Outcome = VendorObservabilityProbeOutcomeFailed
+			result.Outcome = ProbeOutcomeFailed
 			result.Reason = observabilityFailureReasonFromError(collectErr)
 		}
 		result.Message = collectErr.Error()
@@ -145,14 +143,14 @@ func (r *VendorObservabilityRunner) probeProvider(
 	}
 	if collectResult != nil {
 		if err := mergeCredentialBackfills(ctx, r.credentialMerger, credentialID, activeQueryPolicy.CredentialBackfills, collectResult.CredentialBackfillValues); err != nil {
-			result.Outcome = VendorObservabilityProbeOutcomeFailed
+			result.Outcome = ProbeOutcomeFailed
 			result.Reason = observabilityFailureReasonFromError(err)
 			result.Message = err.Error()
 			return r.recordProbeResult(result, trigger, now, vendorObservabilityFailureBackoff), nil
 		}
-		r.metrics.recordCollectorValues(result.VendorID, result.ProviderID, collectResult.GaugeRows)
+		r.metrics.recordCollectorValues(result.OwnerID, result.ProviderID, collectResult.GaugeRows)
 	}
-	result.Outcome = VendorObservabilityProbeOutcomeExecuted
+	result.Outcome = ProbeOutcomeExecuted
 	result.Message = "operation completed"
 	nextAllowedAfter := activeQueryPolicy.PollInterval
 	if nextAllowedAfter < vendorObservabilityPendingBackoff {
@@ -171,7 +169,7 @@ func (r *VendorObservabilityRunner) vendorObservabilityCredential(
 	if len(materialReadFields) == 0 {
 		return credential, nil
 	}
-	values, err := r.readCredentialMaterialFields(ctx, credentialID, policyRef, materialReadFields)
+	values, err := readCredentialMaterialFields(ctx, r.credentialReader, credentialID, policyRef, materialReadFields)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +189,7 @@ func (r *VendorObservabilityRunner) vendorObservabilityCredential(
 	return credential, nil
 }
 
-func vendorObservabilityCredentialID(providerID string, surface *providerv1.ProviderSurfaceBinding, collector VendorObservabilityCollector) string {
+func vendorObservabilityCredentialID(providerID string, surface *providerv1.ProviderSurfaceBinding, collector ObservabilityCollector) string {
 	if vendorObservabilityUsesObservabilityCredential(collector) {
 		if credentialID := provideridentity.ObservabilityCredentialID(providerID); credentialID != "" {
 			return credentialID
@@ -203,7 +201,7 @@ func vendorObservabilityCredentialID(providerID string, surface *providerv1.Prov
 	return strings.TrimSpace(surface.GetProviderCredentialRef().GetProviderCredentialId())
 }
 
-func vendorObservabilityUsesObservabilityCredential(collector VendorObservabilityCollector) bool {
+func vendorObservabilityUsesObservabilityCredential(collector ObservabilityCollector) bool {
 	switch vendorObservabilityAuthAdapterID(collector) {
 	case egressauth.AuthAdapterBearerSessionID, egressauth.AuthAdapterGoogleAIStudioSessionID, egressauth.AuthAdapterSessionCookieID:
 		return true
@@ -212,8 +210,8 @@ func vendorObservabilityUsesObservabilityCredential(collector VendorObservabilit
 	}
 }
 
-func vendorObservabilityAuthAdapterID(collector VendorObservabilityCollector) string {
-	provider, ok := collector.(VendorObservabilityAuthAdapter)
+func vendorObservabilityAuthAdapterID(collector ObservabilityCollector) string {
+	provider, ok := collector.(ObservabilityAuthAdapter)
 	if !ok {
 		return ""
 	}
@@ -231,10 +229,4 @@ func vendorOwnerID(surface *providerv1.ProviderSurfaceBinding) string {
 	return strings.TrimSpace(source.GetId())
 }
 
-func (r *VendorObservabilityRunner) httpClient(ctx context.Context, auth observabilityEgressAuth) (*http.Client, error) {
-	client, err := outboundhttp.NewClientFactory().NewClient(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return withObservabilityEgressAuth(client, auth), nil
-}
+

@@ -10,7 +10,7 @@ import (
 	"code-code.internal/platform-k8s/internal/supportservice/clidefinitions/codeassist"
 )
 
-func TestAntigravityOAuthObservabilityCollectorCollectQuota(t *testing.T) {
+func TestAntigravityObservabilityCollectorCollectQuota(t *testing.T) {
 	previousFetchURLs := antigravityFetchAvailableModelsURLs
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got, want := r.Header.Get("Authorization"), "Bearer access-token"; got != want {
@@ -46,8 +46,8 @@ func TestAntigravityOAuthObservabilityCollectorCollectQuota(t *testing.T) {
 		antigravityFetchAvailableModelsURLs = previousFetchURLs
 	}()
 
-	collector := NewAntigravityOAuthObservabilityCollector()
-	result, err := collector.Collect(context.Background(), OAuthObservabilityCollectInput{
+	collector := NewAntigravityObservabilityCollector()
+	result, err := collector.Collect(context.Background(), ObservabilityCollectInput{
 		AccessToken:           "access-token",
 		HTTPClient:            server.Client(),
 		ModelCatalogUserAgent: "antigravity/1.22.2 darwin/arm64",
@@ -72,7 +72,7 @@ func TestAntigravityOAuthObservabilityCollectorCollectQuota(t *testing.T) {
 	}
 }
 
-func TestAntigravityOAuthObservabilityCollectorNormalizesGenericTierName(t *testing.T) {
+func TestAntigravityObservabilityCollectorNormalizesGenericTierName(t *testing.T) {
 	previousFetchURLs := antigravityFetchAvailableModelsURLs
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -92,7 +92,7 @@ func TestAntigravityOAuthObservabilityCollectorNormalizesGenericTierName(t *test
 		antigravityFetchAvailableModelsURLs = previousFetchURLs
 	}()
 
-	result, err := NewAntigravityOAuthObservabilityCollector().Collect(context.Background(), OAuthObservabilityCollectInput{
+	result, err := NewAntigravityObservabilityCollector().Collect(context.Background(), ObservabilityCollectInput{
 		AccessToken: "access-token",
 		HTTPClient:  server.Client(),
 	})
@@ -104,7 +104,7 @@ func TestAntigravityOAuthObservabilityCollectorNormalizesGenericTierName(t *test
 	}
 }
 
-func metricRowValueWithLabels(rows []OAuthObservabilityMetricRow, metricName string, labelName string, labelValue string) float64 {
+func metricRowValueWithLabels(rows []ObservabilityMetricRow, metricName string, labelName string, labelValue string) float64 {
 	for _, row := range rows {
 		if row.MetricName != metricName {
 			continue

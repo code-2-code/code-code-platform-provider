@@ -23,34 +23,34 @@ const (
 )
 
 func init() {
-	registerVendorObservabilityCollectorFactory(internlmCollectorID, NewInternlmVendorObservabilityCollector)
+	registerVendorCollectorFactory(internlmCollectorID, NewInternlmObservabilityCollector)
 }
 
-// NewInternlmVendorObservabilityCollector returns a collector that probes
+// NewInternlmObservabilityCollector returns a collector that probes
 // InternLM (书生) daily token quota and usage via the console statistics API.
 // Requires one management-plane JWT token resolved from account override or vendor fallback credential.
-func NewInternlmVendorObservabilityCollector() VendorObservabilityCollector {
-	return &internlmVendorObservabilityCollector{}
+func NewInternlmObservabilityCollector() ObservabilityCollector {
+	return &internlmObservabilityCollector{}
 }
 
-type internlmVendorObservabilityCollector struct{}
+type internlmObservabilityCollector struct{}
 
-func (c *internlmVendorObservabilityCollector) CollectorID() string {
+func (c *internlmObservabilityCollector) CollectorID() string {
 	return internlmCollectorID
 }
 
-func (c *internlmVendorObservabilityCollector) AuthAdapterID() string {
+func (c *internlmObservabilityCollector) AuthAdapterID() string {
 	return egressauth.AuthAdapterBearerSessionID
 }
 
-func (c *internlmVendorObservabilityCollector) Collect(ctx context.Context, input VendorObservabilityCollectInput) (*VendorObservabilityCollectResult, error) {
+func (c *internlmObservabilityCollector) Collect(ctx context.Context, input ObservabilityCollectInput) (*ObservabilityCollectResult, error) {
 	if input.HTTPClient == nil {
 		return nil, fmt.Errorf("providerobservability: internlm quotas: http client is nil")
 	}
 
 	token := observabilityCredentialToken(input.ObservabilityCredential)
 	if token == "" {
-		return nil, unauthorizedVendorObservabilityError("internlm quotas: jwt token is required; configure provider observability authentication")
+		return nil, unauthorizedObservabilityError("internlm quotas: jwt token is required; configure provider observability authentication")
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, internlmStatisticsURL, strings.NewReader("{}"))
@@ -66,10 +66,10 @@ func (c *internlmVendorObservabilityCollector) Collect(ctx context.Context, inpu
 		return nil, fmt.Errorf("providerobservability: internlm quotas: execute request: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, vendorObservabilityMaxBodyReadSize))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, observabilityMaxBodyReadSize))
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, unauthorizedVendorObservabilityError(
+		return nil, unauthorizedObservabilityError(
 			fmt.Sprintf("internlm quotas: unauthorized: status %d %s", resp.StatusCode, strings.TrimSpace(string(body))),
 		)
 	}
@@ -84,7 +84,7 @@ func (c *internlmVendorObservabilityCollector) Collect(ctx context.Context, inpu
 	if len(rows) == 0 {
 		return nil, fmt.Errorf("providerobservability: internlm quotas: no quota data collected")
 	}
-	return &VendorObservabilityCollectResult{GaugeRows: rows}, nil
+	return &ObservabilityCollectResult{GaugeRows: rows}, nil
 }
 
 // internlmStatisticsResponse represents the statistics API response.
@@ -107,7 +107,7 @@ type internlmUsageBucket struct {
 
 // parseInternlmStatisticsGaugeRows converts the statistics response into
 // metric gauge rows for daily input and output token quota families.
-func parseInternlmStatisticsGaugeRows(body []byte) ([]VendorObservabilityMetricRow, error) {
+func parseInternlmStatisticsGaugeRows(body []byte) ([]ObservabilityMetricRow, error) {
 	var resp internlmStatisticsResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("providerobservability: internlm quotas: decode response: %w", err)
@@ -126,7 +126,7 @@ func parseInternlmStatisticsGaugeRows(body []byte) ([]VendorObservabilityMetricR
 		{"output", resp.Data.MonthQuota.OutputTokens, resp.Data.MonthUsed.OutputTokens},
 	}
 
-	var rows []VendorObservabilityMetricRow
+	var rows []ObservabilityMetricRow
 	for _, e := range entries {
 		if e.limit <= 0 {
 			continue
@@ -142,10 +142,10 @@ func parseInternlmStatisticsGaugeRows(body []byte) ([]VendorObservabilityMetricR
 			"token_type": e.tokenType,
 		}
 		rows = append(rows,
-			VendorObservabilityMetricRow{MetricName: internlmDailyQuotaLimitMetric, Labels: labels, Value: e.limit},
-			VendorObservabilityMetricRow{MetricName: internlmDailyQuotaUsageMetric, Labels: labels, Value: e.usage},
-			VendorObservabilityMetricRow{MetricName: internlmDailyQuotaRemainingMetric, Labels: labels, Value: remaining},
-			VendorObservabilityMetricRow{MetricName: internlmDailyQuotaUsagePercentMetric, Labels: labels, Value: usagePercent},
+			ObservabilityMetricRow{MetricName: internlmDailyQuotaLimitMetric, Labels: labels, Value: e.limit},
+			ObservabilityMetricRow{MetricName: internlmDailyQuotaUsageMetric, Labels: labels, Value: e.usage},
+			ObservabilityMetricRow{MetricName: internlmDailyQuotaRemainingMetric, Labels: labels, Value: remaining},
+			ObservabilityMetricRow{MetricName: internlmDailyQuotaUsagePercentMetric, Labels: labels, Value: usagePercent},
 		)
 	}
 	return rows, nil

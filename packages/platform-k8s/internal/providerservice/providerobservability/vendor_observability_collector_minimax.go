@@ -26,23 +26,23 @@ var (
 )
 
 func init() {
-	registerVendorObservabilityCollectorFactory(minimaxRemainsCollectorID, NewMinimaxVendorObservabilityCollector)
+	registerVendorCollectorFactory(minimaxRemainsCollectorID, NewMinimaxObservabilityCollector)
 }
 
-func NewMinimaxVendorObservabilityCollector() VendorObservabilityCollector {
-	return &minimaxVendorObservabilityCollector{}
+func NewMinimaxObservabilityCollector() ObservabilityCollector {
+	return &minimaxObservabilityCollector{}
 }
 
-type minimaxVendorObservabilityCollector struct{}
+type minimaxObservabilityCollector struct{}
 
-func (c *minimaxVendorObservabilityCollector) CollectorID() string {
+func (c *minimaxObservabilityCollector) CollectorID() string {
 	return minimaxRemainsCollectorID
 }
 
-func (c *minimaxVendorObservabilityCollector) Collect(ctx context.Context, input VendorObservabilityCollectInput) (*VendorObservabilityCollectResult, error) {
+func (c *minimaxObservabilityCollector) Collect(ctx context.Context, input ObservabilityCollectInput) (*ObservabilityCollectResult, error) {
 	apiKey := strings.TrimSpace(input.APIKey)
 	if apiKey == "" {
-		return nil, unauthorizedVendorObservabilityError("minimax api key is empty")
+		return nil, unauthorizedObservabilityError("minimax api key is empty")
 	}
 	if input.HTTPClient == nil {
 		return nil, fmt.Errorf("providerobservability: minimax vendor observability http client is nil")
@@ -62,9 +62,9 @@ func (c *minimaxVendorObservabilityCollector) Collect(ctx context.Context, input
 		return nil, fmt.Errorf("providerobservability: execute minimax remains request: %w", err)
 	}
 	defer response.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(response.Body, vendorObservabilityMaxBodyReadSize))
+	body, _ := io.ReadAll(io.LimitReader(response.Body, observabilityMaxBodyReadSize))
 	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
-		return nil, unauthorizedVendorObservabilityError(
+		return nil, unauthorizedObservabilityError(
 			fmt.Sprintf("minimax remains unauthorized: status %d %s", response.StatusCode, strings.TrimSpace(string(body))),
 		)
 	}
@@ -75,7 +75,7 @@ func (c *minimaxVendorObservabilityCollector) Collect(ctx context.Context, input
 	if err != nil {
 		return nil, err
 	}
-	return &VendorObservabilityCollectResult{GaugeRows: rows}, nil
+	return &ObservabilityCollectResult{GaugeRows: rows}, nil
 }
 
 func minimaxRemainsURL(surfaceBaseURL string) (string, error) {

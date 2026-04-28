@@ -27,25 +27,17 @@ func (c oauthObservabilityCapability) Supports(surface *managementv1.ProviderSur
 }
 
 func (c oauthObservabilityCapability) ProbeProvider(ctx context.Context, target providerobservability.ProbeTarget, trigger providerobservability.Trigger) (*providerobservability.ProbeResult, error) {
-	result, err := c.runner.ProbeProvider(ctx, target.ProviderID, oauthProbeTrigger(trigger))
+	result, err := c.runner.ProbeProvider(ctx, target.ProviderID, trigger)
 	if err != nil || result == nil {
 		return nil, err
 	}
-	ownerID := strings.TrimSpace(result.CLIID)
-	if ownerID == "" {
-		ownerID = target.OwnerID
+	if result.OwnerKind == "" {
+		result.OwnerKind = providerobservability.OwnerKindCLI
 	}
-	return &providerobservability.ProbeResult{
-		OwnerKind:                providerobservability.OwnerKindCLI,
-		OwnerID:                  ownerID,
-		ProviderID:               result.ProviderID,
-		ProviderSurfaceBindingID: result.ProviderSurfaceBindingID,
-		Outcome:                  providerobservability.ProbeOutcome(result.Outcome),
-		Message:                  result.Message,
-		Reason:                   result.Reason,
-		LastAttemptAt:            result.LastAttemptAt,
-		NextAllowedAt:            result.NextAllowedAt,
-	}, nil
+	if strings.TrimSpace(result.OwnerID) == "" {
+		result.OwnerID = target.OwnerID
+	}
+	return result, nil
 }
 
 type vendorObservabilityCapability struct {
@@ -66,25 +58,17 @@ func (c vendorObservabilityCapability) Supports(surface *managementv1.ProviderSu
 }
 
 func (c vendorObservabilityCapability) ProbeProvider(ctx context.Context, target providerobservability.ProbeTarget, trigger providerobservability.Trigger) (*providerobservability.ProbeResult, error) {
-	result, err := c.runner.ProbeProvider(ctx, target.ProviderID, vendorProbeTrigger(trigger))
+	result, err := c.runner.ProbeProvider(ctx, target.ProviderID, trigger)
 	if err != nil || result == nil {
 		return nil, err
 	}
-	ownerID := strings.TrimSpace(result.VendorID)
-	if ownerID == "" {
-		ownerID = target.OwnerID
+	if result.OwnerKind == "" {
+		result.OwnerKind = providerobservability.OwnerKindVendor
 	}
-	return &providerobservability.ProbeResult{
-		OwnerKind:                providerobservability.OwnerKindVendor,
-		OwnerID:                  ownerID,
-		ProviderID:               result.ProviderID,
-		ProviderSurfaceBindingID: result.ProviderSurfaceBindingID,
-		Outcome:                  providerobservability.ProbeOutcome(result.Outcome),
-		Message:                  result.Message,
-		Reason:                   result.Reason,
-		LastAttemptAt:            result.LastAttemptAt,
-		NextAllowedAt:            result.NextAllowedAt,
-	}, nil
+	if strings.TrimSpace(result.OwnerID) == "" {
+		result.OwnerID = target.OwnerID
+	}
+	return result, nil
 }
 
 func surfaceBindingRuntime(surface *managementv1.ProviderSurfaceBindingView) *providerv1.ProviderSurfaceRuntime {
@@ -94,24 +78,3 @@ func surfaceBindingRuntime(surface *managementv1.ProviderSurfaceBindingView) *pr
 	return surface.GetRuntime()
 }
 
-func oauthProbeTrigger(trigger providerobservability.Trigger) providerobservability.OAuthObservabilityProbeTrigger {
-	switch trigger {
-	case providerobservability.TriggerManual:
-		return providerobservability.OAuthObservabilityProbeTriggerManual
-	case providerobservability.TriggerConnect:
-		return providerobservability.OAuthObservabilityProbeTriggerConnect
-	default:
-		return providerobservability.OAuthObservabilityProbeTriggerSchedule
-	}
-}
-
-func vendorProbeTrigger(trigger providerobservability.Trigger) providerobservability.VendorObservabilityProbeTrigger {
-	switch trigger {
-	case providerobservability.TriggerManual:
-		return providerobservability.VendorObservabilityProbeTriggerManual
-	case providerobservability.TriggerConnect:
-		return providerobservability.VendorObservabilityProbeTriggerConnect
-	default:
-		return providerobservability.VendorObservabilityProbeTriggerSchedule
-	}
-}

@@ -83,7 +83,7 @@ func parseCerebrasGraphQLGaugeRows(
 	usageBody []byte,
 	orgID string,
 	orgName string,
-) ([]VendorObservabilityMetricRow, error) {
+) ([]ObservabilityMetricRow, error) {
 	var quotaResp struct {
 		Data struct {
 			ListOrganizationEffectiveQuotas []cerebrasUsageQuota `json:"ListOrganizationEffectiveQuotas"`
@@ -113,7 +113,7 @@ func parseCerebrasGraphQLGaugeRows(
 		}
 	}
 
-	var rows []VendorObservabilityMetricRow
+	var rows []ObservabilityMetricRow
 	for _, q := range quotaResp.Data.ListOrganizationEffectiveQuotas {
 		modelID := strings.TrimSpace(q.ModelID)
 		regionID := strings.TrimSpace(q.RegionID)
@@ -160,12 +160,12 @@ func parseCerebrasGraphQLGaugeRows(
 			}
 
 			rows = append(rows,
-				VendorObservabilityMetricRow{MetricName: cerebrasQuotaLimitMetric, Labels: labels, Value: float64(limit)},
-				VendorObservabilityMetricRow{MetricName: cerebrasQuotaUsageMetric, Labels: labels, Value: float64(used)},
-				VendorObservabilityMetricRow{MetricName: cerebrasQuotaRemainingMetric, Labels: labels, Value: float64(remaining)},
+				ObservabilityMetricRow{MetricName: cerebrasQuotaLimitMetric, Labels: labels, Value: float64(limit)},
+				ObservabilityMetricRow{MetricName: cerebrasQuotaUsageMetric, Labels: labels, Value: float64(used)},
+				ObservabilityMetricRow{MetricName: cerebrasQuotaRemainingMetric, Labels: labels, Value: float64(remaining)},
 			)
 			if limit > 0 {
-				rows = append(rows, VendorObservabilityMetricRow{
+				rows = append(rows, ObservabilityMetricRow{
 					MetricName: cerebrasQuotaUsagePercentMetric,
 					Labels:     labels,
 					Value:      float64(used) / float64(limit) * 100.0,

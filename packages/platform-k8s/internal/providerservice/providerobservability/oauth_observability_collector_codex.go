@@ -24,31 +24,31 @@ const (
 
 var codexUsageProbeURL = "https://chatgpt.com/backend-api/wham/usage"
 
-// NewCodexOAuthObservabilityCollector creates one Codex collector.
-func NewCodexOAuthObservabilityCollector() OAuthObservabilityCollector {
-	return &codexOAuthObservabilityCollector{}
+// NewCodexObservabilityCollector creates one Codex collector.
+func NewCodexObservabilityCollector() ObservabilityCollector {
+	return &codexObservabilityCollector{}
 }
 
 func init() {
-	registerOAuthObservabilityCollectorFactory("codex", NewCodexOAuthObservabilityCollector)
+	registerOAuthCollectorFactory("codex", NewCodexObservabilityCollector)
 }
 
-type codexOAuthObservabilityCollector struct{}
+type codexObservabilityCollector struct{}
 
-func (c *codexOAuthObservabilityCollector) CollectorID() string {
+func (c *codexObservabilityCollector) CollectorID() string {
 	return "codex"
 }
 
-func (c *codexOAuthObservabilityCollector) Collect(ctx context.Context, input OAuthObservabilityCollectInput) (*OAuthObservabilityCollectResult, error) {
+func (c *codexObservabilityCollector) Collect(ctx context.Context, input ObservabilityCollectInput) (*ObservabilityCollectResult, error) {
 	if strings.TrimSpace(input.AccessToken) == "" {
-		return nil, unauthorizedOAuthObservabilityError("codex access token is empty")
+		return nil, unauthorizedObservabilityError("codex access token is empty")
 	}
 	if input.HTTPClient == nil {
 		return nil, fmt.Errorf("providerobservability: codex oauth observability http client is nil")
 	}
 	accountID := strings.TrimSpace(input.MaterialValues[materialKeyAccountID])
 	if accountID == "" {
-		return nil, unauthorizedOAuthObservabilityError("codex chatgpt account id is empty")
+		return nil, unauthorizedObservabilityError("codex chatgpt account id is empty")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, codexUsageProbeURL, nil)
 	if err != nil {
@@ -64,16 +64,16 @@ func (c *codexOAuthObservabilityCollector) Collect(ctx context.Context, input OA
 		return nil, fmt.Errorf("providerobservability: execute codex usage operation request: %w", err)
 	}
 	defer response.Body.Close()
-	bodyBytes, _ := io.ReadAll(io.LimitReader(response.Body, oauthObservabilityMaxBodyReadSize))
+	bodyBytes, _ := io.ReadAll(io.LimitReader(response.Body, observabilityMaxBodyReadSize))
 
 	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
-		return nil, unauthorizedOAuthObservabilityError(
+		return nil, unauthorizedObservabilityError(
 			fmt.Sprintf("codex usage operation unauthorized: status %d %s", response.StatusCode, strings.TrimSpace(string(bodyBytes))),
 		)
 	}
 	if response.StatusCode == http.StatusTooManyRequests {
 		if values, ok := codexUsageLimitGaugeValues("", nil, time.Now().UTC(), bodyBytes); ok {
-			return &OAuthObservabilityCollectResult{GaugeRows: gaugeRows(values)}, nil
+			return &ObservabilityCollectResult{GaugeRows: gaugeRows(values)}, nil
 		}
 		return nil, fmt.Errorf("providerobservability: codex usage operation 429 is not usage_limit_reached")
 	}
@@ -86,7 +86,7 @@ func (c *codexOAuthObservabilityCollector) Collect(ctx context.Context, input OA
 		return nil, fmt.Errorf("providerobservability: decode codex usage operation response: %w", err)
 	}
 	values, _ := codexUsageLimitGaugeValues(parsed.PlanType, parsed.RateLimit, time.Now().UTC(), nil)
-	return &OAuthObservabilityCollectResult{GaugeRows: gaugeRows(values)}, nil
+	return &ObservabilityCollectResult{GaugeRows: gaugeRows(values)}, nil
 }
 
 type codexUsageResponse struct {
@@ -226,7 +226,7 @@ func boolFloat(value bool) float64 {
 	return 0
 }
 
-func codexObservabilityUserAgent(input OAuthObservabilityCollectInput) string {
+func codexObservabilityUserAgent(input ObservabilityCollectInput) string {
 	if value := strings.TrimSpace(input.ObservabilityUserAgent); value != "" {
 		return value
 	}

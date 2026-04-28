@@ -76,7 +76,7 @@ func googleAIStudioMetricTimeSeriesPayload(projectPath string, request googleAIS
 	})
 }
 
-func (c *googleAIStudioVendorObservabilityCollector) enrichGoogleAIStudioMetricTimeSeriesRows(
+func (c *googleAIStudioObservabilityCollector) enrichGoogleAIStudioMetricTimeSeriesRows(
 	ctx context.Context,
 	httpClient *http.Client,
 	input googleAIStudioRPCCallInput,

@@ -23,30 +23,30 @@ const (
 )
 
 func init() {
-	registerVendorObservabilityCollectorFactory(meituanLongcatCollectorID, NewMeituanLongcatVendorObservabilityCollector)
+	registerVendorCollectorFactory(meituanLongcatCollectorID, NewMeituanLongcatObservabilityCollector)
 }
 
-// NewMeituanLongcatVendorObservabilityCollector returns a collector that probes
+// NewMeituanLongcatObservabilityCollector returns a collector that probes
 // the LongCat console tokenUsage endpoint using a management-plane session
 // management-plane token resolved from account override or vendor fallback credential.
-func NewMeituanLongcatVendorObservabilityCollector() VendorObservabilityCollector {
-	return &meituanLongcatVendorObservabilityCollector{}
+func NewMeituanLongcatObservabilityCollector() ObservabilityCollector {
+	return &meituanLongcatObservabilityCollector{}
 }
 
-type meituanLongcatVendorObservabilityCollector struct{}
+type meituanLongcatObservabilityCollector struct{}
 
-func (c *meituanLongcatVendorObservabilityCollector) CollectorID() string {
+func (c *meituanLongcatObservabilityCollector) CollectorID() string {
 	return meituanLongcatCollectorID
 }
 
-func (c *meituanLongcatVendorObservabilityCollector) AuthAdapterID() string {
+func (c *meituanLongcatObservabilityCollector) AuthAdapterID() string {
 	return egressauth.AuthAdapterBearerSessionID
 }
 
-func (c *meituanLongcatVendorObservabilityCollector) Collect(ctx context.Context, input VendorObservabilityCollectInput) (*VendorObservabilityCollectResult, error) {
+func (c *meituanLongcatObservabilityCollector) Collect(ctx context.Context, input ObservabilityCollectInput) (*ObservabilityCollectResult, error) {
 	token := observabilityCredentialToken(input.ObservabilityCredential)
 	if token == "" {
-		return nil, unauthorizedVendorObservabilityError("meituan longcat token usage: observability token is empty; configure provider observability authentication")
+		return nil, unauthorizedObservabilityError("meituan longcat token usage: observability token is empty; configure provider observability authentication")
 	}
 	if input.HTTPClient == nil {
 		return nil, fmt.Errorf("providerobservability: meituan longcat token usage: http client is nil")
@@ -62,9 +62,9 @@ func (c *meituanLongcatVendorObservabilityCollector) Collect(ctx context.Context
 		return nil, fmt.Errorf("providerobservability: meituan longcat token usage: execute request: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, vendorObservabilityMaxBodyReadSize))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, observabilityMaxBodyReadSize))
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, unauthorizedVendorObservabilityError(
+		return nil, unauthorizedObservabilityError(
 			fmt.Sprintf("meituan longcat token usage: unauthorized: status %d %s", resp.StatusCode, strings.TrimSpace(string(body))),
 		)
 	}
@@ -75,5 +75,5 @@ func (c *meituanLongcatVendorObservabilityCollector) Collect(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
-	return &VendorObservabilityCollectResult{GaugeRows: rows}, nil
+	return &ObservabilityCollectResult{GaugeRows: rows}, nil
 }
