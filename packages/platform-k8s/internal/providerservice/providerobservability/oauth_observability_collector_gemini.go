@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"code-code.internal/platform-k8s/internal/supportservice/clidefinitions/codeassist"
+	"code-code.internal/platform-k8s/internal/platform/codeassist"
 )
 
 const (
@@ -79,35 +79,23 @@ func (c *geminiObservabilityCollector) CollectorID() string {
 }
 
 func (c *geminiObservabilityCollector) Collect(ctx context.Context, input ObservabilityCollectInput) (*ObservabilityCollectResult, error) {
-	if strings.TrimSpace(input.AccessToken) == "" {
-		return nil, unauthorizedObservabilityError("gemini access token is empty")
-	}
-	projectID := strings.TrimSpace(input.MaterialValues[materialKeyProjectID])
-	codeAssistPayload, err := codeassist.LoadGeminiCodeAssist(ctx, input.HTTPClient, input.AccessToken, projectID)
+	projectID := ""
+	codeAssistPayload, err := codeassist.LoadGeminiCodeAssist(ctx, input.HTTPClient, "", projectID)
 	if err != nil {
 		return nil, err
 	}
 	if resolvedProjectID := codeassist.GeminiProjectID(codeAssistPayload); resolvedProjectID != "" {
 		projectID = resolvedProjectID
 	}
-	tierName := codeassist.GeminiTierName(codeAssistPayload)
 	if projectID == "" {
 		return nil, fmt.Errorf("providerobservability: gemini project id is empty")
 	}
-	quotaPayload, err := codeassist.LoadGeminiUserQuota(ctx, input.HTTPClient, input.AccessToken, projectID)
+	quotaPayload, err := codeassist.LoadGeminiUserQuota(ctx, input.HTTPClient, "", projectID)
 	if err != nil {
 		return nil, err
 	}
-	backfillValues := map[string]string{}
-	if projectID != "" {
-		backfillValues[materialKeyProjectID] = projectID
-	}
-	if tierName != "" {
-		backfillValues[materialKeyTierName] = tierName
-	}
 	return &ObservabilityCollectResult{
-		GaugeRows:                gaugeRows(geminiQuotaGaugeValues(quotaPayload)),
-		CredentialBackfillValues: backfillValues,
+		GaugeRows: gaugeRows(geminiQuotaGaugeValues(quotaPayload)),
 	}, nil
 }
 
@@ -147,7 +135,7 @@ func geminiQuotaGaugeValues(payload map[string]any) map[string]float64 {
 		summary := summaries[group.name]
 		remainingPercent, hasPercent := geminiBucketRemainingPercent(entry)
 		remainingAmount, hasAmount := geminiBucketRemainingAmount(entry)
-		resetAt, hasResetAt := geminiBucketResetAt(entry)
+		resetAt, hasResetAt := parseRFC3339Timestamp(entry["resetTime"])
 		if shouldReplaceGeminiQuotaSummary(summary, remainingPercent, hasPercent, remainingAmount, hasAmount) {
 			if hasPercent {
 				summary.remainingPercent = remainingPercent
@@ -206,14 +194,7 @@ func geminiBucketRemainingPercent(entry map[string]any) (float64, bool) {
 	if !ok {
 		return 0, false
 	}
-	percent := value * 100
-	if percent < 0 {
-		percent = 0
-	}
-	if percent > 100 {
-		percent = 100
-	}
-	return percent, true
+	return clampPercent(value * 100), true
 }
 
 func geminiBucketRemainingAmount(entry map[string]any) (float64, bool) {
@@ -237,20 +218,4 @@ func parseGeminiRemainingAmount(raw string) (float64, error) {
 		return 0, fmt.Errorf("remaining amount is empty")
 	}
 	return strconv.ParseFloat(trimmed, 64)
-}
-
-func geminiBucketResetAt(entry map[string]any) (time.Time, bool) {
-	value, _ := entry["resetTime"].(string)
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return time.Time{}, false
-	}
-	parsed, err := time.Parse(time.RFC3339, trimmed)
-	if err != nil {
-		parsed, err = time.Parse(time.RFC3339Nano, trimmed)
-		if err != nil {
-			return time.Time{}, false
-		}
-	}
-	return parsed.UTC(), true
 }

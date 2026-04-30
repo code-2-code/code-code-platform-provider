@@ -8,8 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-
-	"code-code.internal/platform-k8s/internal/egressauth"
 )
 
 const (
@@ -20,8 +18,7 @@ const (
 
 	cerebrasCollectorID = "cerebras-quotas"
 
-	cerebrasGraphQLURL    = "https://cloud.cerebras.ai/api/graphql"
-	cerebrasSessionCookie = "authjs.session-token"
+	cerebrasGraphQLURL = "https://cloud.cerebras.ai/api/graphql"
 )
 
 func init() {
@@ -30,7 +27,6 @@ func init() {
 
 // NewCerebrasObservabilityCollector returns a collector that probes
 // Cerebras quota and usage data via the Cloud console GraphQL API.
-// Requires one management-plane session token resolved from account override or vendor fallback credential.
 func NewCerebrasObservabilityCollector() ObservabilityCollector {
 	return &cerebrasObservabilityCollector{}
 }
@@ -41,29 +37,12 @@ func (c *cerebrasObservabilityCollector) CollectorID() string {
 	return cerebrasCollectorID
 }
 
-func (c *cerebrasObservabilityCollector) AuthAdapterID() string {
-	return egressauth.AuthAdapterSessionCookieID
-}
-
 func (c *cerebrasObservabilityCollector) Collect(ctx context.Context, input ObservabilityCollectInput) (*ObservabilityCollectResult, error) {
 	if input.HTTPClient == nil {
 		return nil, fmt.Errorf("providerobservability: cerebras quotas: http client is nil")
 	}
 
-	sessionToken := observabilitySessionValue(
-		input.ObservabilityCredential,
-		"authjs.session-token",
-		"authjs_session_token",
-		"session_token",
-	)
-	if sessionToken == "" {
-		sessionToken = observabilityCredentialToken(input.ObservabilityCredential)
-	}
-	if sessionToken == "" {
-		return nil, unauthorizedObservabilityError("cerebras quotas: session token is required; configure provider observability authentication")
-	}
-
-	rows, backfillValues, err := cerebrasCollectGraphQL(ctx, input.HTTPClient, sessionToken, input.CredentialBackfills)
+	rows, err := cerebrasCollectGraphQL(ctx, input.HTTPClient)
 	if err != nil {
 		return nil, err
 	}
@@ -71,42 +50,37 @@ func (c *cerebrasObservabilityCollector) Collect(ctx context.Context, input Obse
 		return nil, fmt.Errorf("providerobservability: cerebras quotas: no quota data collected")
 	}
 	return &ObservabilityCollectResult{
-		GaugeRows:                rows,
-		CredentialBackfillValues: backfillValues,
+		GaugeRows: rows,
 	}, nil
 }
 
 // cerebrasCollectGraphQL fetches quota limits and current usage via the
 // Cerebras Cloud console GraphQL API.
-func cerebrasCollectGraphQL(ctx context.Context, httpClient *http.Client, sessionToken string, backfillRules []CredentialBackfillRule) ([]ObservabilityMetricRow, map[string]string, error) {
-	latestToken := strings.TrimSpace(sessionToken)
-
-	organizations, backfillValues, err := cerebrasResolveOrganizations(ctx, httpClient, latestToken, backfillRules)
+func cerebrasCollectGraphQL(ctx context.Context, httpClient *http.Client) ([]ObservabilityMetricRow, error) {
+	organizations, err := cerebrasResolveOrganizations(ctx, httpClient)
 	if err != nil {
-		return nil, nil, fmt.Errorf("providerobservability: cerebras quotas graphql: resolve organizations: %w", err)
+		return nil, fmt.Errorf("providerobservability: cerebras quotas graphql: resolve organizations: %w", err)
 	}
 
 	rows := make([]ObservabilityMetricRow, 0)
 	orgErrs := make([]string, 0)
 	for _, org := range organizations {
-		quotas, quotaBackfills, err := cerebrasGraphQLQuery(ctx, httpClient, latestToken, backfillRules,
+		quotas, err := cerebrasGraphQLQuery(ctx, httpClient,
 			cerebrasListOrganizationEffectiveQuotasQuery,
 			map[string]any{"organizationId": org.ID},
 		)
-		backfillValues = mergeCredentialBackfillValues(backfillValues, quotaBackfills)
 		if err != nil {
 			if isObservabilityUnauthorizedError(err) {
-				return nil, nil, fmt.Errorf("providerobservability: cerebras quotas graphql: list quotas for org %q: %w", org.ID, err)
+				return nil, fmt.Errorf("providerobservability: cerebras quotas graphql: list quotas for org %q: %w", org.ID, err)
 			}
 			orgErrs = append(orgErrs, fmt.Sprintf("%s: %s", org.ID, err.Error()))
 			continue
 		}
 
-		usages, usageBackfills, err := cerebrasGraphQLQuery(ctx, httpClient, latestToken, backfillRules,
+		usages, err := cerebrasGraphQLQuery(ctx, httpClient,
 			cerebrasListOrganizationUsageQuery,
 			map[string]any{"organizationId": org.ID},
 		)
-		backfillValues = mergeCredentialBackfillValues(backfillValues, usageBackfills)
 		if err != nil {
 			// Usage is best-effort; proceed with quotas only.
 			usages = nil
@@ -120,47 +94,46 @@ func cerebrasCollectGraphQL(ctx context.Context, httpClient *http.Client, sessio
 	}
 	if len(rows) == 0 {
 		if len(orgErrs) > 0 {
-			return nil, nil, fmt.Errorf("providerobservability: cerebras quotas graphql: no metric rows returned: %s", strings.Join(orgErrs, "; "))
+			return nil, fmt.Errorf("providerobservability: cerebras quotas graphql: no metric rows returned: %s", strings.Join(orgErrs, "; "))
 		}
-		return nil, nil, fmt.Errorf("providerobservability: cerebras quotas graphql: no metric rows returned")
+		return nil, fmt.Errorf("providerobservability: cerebras quotas graphql: no metric rows returned")
 	}
-	return rows, backfillValues, nil
+	return rows, nil
 }
 
 // cerebrasResolveOrganizations calls ListMyOrganizations and returns all
 // accessible organizations, preferring active ones first.
-func cerebrasResolveOrganizations(ctx context.Context, httpClient *http.Client, sessionToken string, backfillRules []CredentialBackfillRule) ([]cerebrasOrganization, map[string]string, error) {
-	body, backfillValues, err := cerebrasGraphQLQuery(ctx, httpClient, sessionToken, backfillRules,
+func cerebrasResolveOrganizations(ctx context.Context, httpClient *http.Client) ([]cerebrasOrganization, error) {
+	body, err := cerebrasGraphQLQuery(ctx, httpClient,
 		cerebrasListMyOrganizationsQuery,
 		map[string]any{},
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	organizations, parseErr := parseCerebrasOrganizations(body)
 	if parseErr != nil {
-		return nil, nil, parseErr
+		return nil, parseErr
 	}
-	return organizations, backfillValues, nil
+	return organizations, nil
 }
 
 // cerebrasGraphQLQuery executes one GraphQL query against the Cerebras Cloud
 // console endpoint.
-func cerebrasGraphQLQuery(ctx context.Context, httpClient *http.Client, sessionToken string, backfillRules []CredentialBackfillRule, query string, variables map[string]any) ([]byte, map[string]string, error) {
+func cerebrasGraphQLQuery(ctx context.Context, httpClient *http.Client, query string, variables map[string]any) ([]byte, error) {
 	payload, err := json.Marshal(map[string]any{
 		"query":     query,
 		"variables": variables,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("providerobservability: cerebras quotas graphql: marshal request: %w", err)
+		return nil, fmt.Errorf("providerobservability: cerebras quotas graphql: marshal request: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cerebrasGraphQLURL, bytes.NewReader(payload))
 	if err != nil {
-		return nil, nil, fmt.Errorf("providerobservability: cerebras quotas graphql: create request: %w", err)
+		return nil, fmt.Errorf("providerobservability: cerebras quotas graphql: create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Cookie", cerebrasSessionCookie+"="+sessionToken)
 	// Mimic browser origin to pass Cerebras server-side checks.
 	req.Header.Set("Origin", "https://cloud.cerebras.ai")
 	req.Header.Set("Referer", "https://cloud.cerebras.ai/platform")
@@ -168,22 +141,22 @@ func cerebrasGraphQLQuery(ctx context.Context, httpClient *http.Client, sessionT
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("providerobservability: cerebras quotas graphql: execute request: %w", err)
+		return nil, fmt.Errorf("providerobservability: cerebras quotas graphql: execute request: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, observabilityMaxBodyReadSize))
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, nil, unauthorizedObservabilityError(
+		return nil, unauthorizedObservabilityError(
 			fmt.Sprintf("cerebras quotas graphql: authjs.session-token is invalid or expired: status %d %s", resp.StatusCode, strings.TrimSpace(string(body))),
 		)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, nil, fmt.Errorf("providerobservability: cerebras quotas graphql: failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("providerobservability: cerebras quotas graphql: failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	if err := cerebrasGraphQLResponseError(body); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return body, credentialBackfillValuesFromHTTPResponse(backfillRules, resp.Header), nil
+	return body, nil
 }
 
 func cerebrasGraphQLResponseError(body []byte) error {

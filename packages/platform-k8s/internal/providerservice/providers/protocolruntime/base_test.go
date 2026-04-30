@@ -14,8 +14,10 @@ func TestBaseRuntimeListModelsBuildsCatalogFromConfiguredSurfaceModels(t *testin
 	t.Parallel()
 
 	runtime := &BaseRuntime{
-		Surface: &providerv1.ProviderSurfaceBinding{
-			SurfaceId: "instance-1",
+		Provider: &providerv1.Provider{
+			ProviderId:  "provider-1",
+			DisplayName: "Provider 1",
+			SurfaceId:   "instance-1",
 			Runtime: &providerv1.ProviderSurfaceRuntime{
 				DisplayName: "instance-1",
 				Origin:      providerv1.ProviderSurfaceOrigin_PROVIDER_SURFACE_ORIGIN_DERIVED,
@@ -53,8 +55,10 @@ func TestBaseRuntimeListModelsAllowsEmptySurfaceCatalog(t *testing.T) {
 	t.Parallel()
 
 	runtime := &BaseRuntime{
-		Surface: &providerv1.ProviderSurfaceBinding{
-			SurfaceId: "instance-1",
+		Provider: &providerv1.Provider{
+			ProviderId:  "provider-1",
+			DisplayName: "Provider 1",
+			SurfaceId:   "instance-1",
 			Runtime: &providerv1.ProviderSurfaceRuntime{
 				DisplayName: "instance-1",
 				Origin:      providerv1.ProviderSurfaceOrigin_PROVIDER_SURFACE_ORIGIN_DERIVED,

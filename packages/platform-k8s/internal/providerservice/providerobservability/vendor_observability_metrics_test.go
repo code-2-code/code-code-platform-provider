@@ -10,10 +10,10 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
-func TestVendorObservabilityMetricsRecordAuthUsable(t *testing.T) {
+func TestSurfaceObservabilityMetricsRecordAuthUsable(t *testing.T) {
 	t.Parallel()
 
-	metrics, reader := newTestVendorObservabilityMetrics(t)
+	metrics, reader := newTestSurfaceObservabilityMetrics(t)
 	now := time.Unix(1700000000, 0).UTC()
 
 	metrics.record("cerebras", "account-a", TriggerManual, ProbeOutcomeExecuted, "", now, now.Add(time.Minute))
@@ -28,7 +28,7 @@ func TestVendorObservabilityMetricsRecordAuthUsable(t *testing.T) {
 	}
 
 	authBlockedAt := now.Add(time.Minute)
-	metrics.record("cerebras", "account-a", TriggerManual, ProbeOutcomeAuthBlocked, "SESSION_COOKIE_INVALID", authBlockedAt, authBlockedAt.Add(time.Minute))
+	metrics.record("cerebras", "account-a", TriggerManual, ProbeOutcomeAuthBlocked, "AUTH_BLOCKED", authBlockedAt, authBlockedAt.Add(time.Minute))
 	if got := observedMetricValue(t, reader, "vendor.auth.usable.test"); got != 0 {
 		t.Fatalf("authUsable after auth_blocked = %v, want 0", got)
 	}
@@ -52,10 +52,27 @@ func TestVendorObservabilityMetricsRecordAuthUsable(t *testing.T) {
 	}
 }
 
+func TestSurfaceObservabilityMetricsClearsKnownStaleReasons(t *testing.T) {
+	t.Parallel()
+
+	metrics, reader := newTestSurfaceObservabilityMetrics(t)
+	now := time.Unix(1700000000, 0).UTC()
+
+	metrics.record("google", "provider-google", TriggerManual, ProbeOutcomeAuthBlocked, "CREDENTIALS_MISSING", now, now.Add(time.Minute))
+
+	points := observedGaugePoints(t, reader, "vendor.probe.last.reason.test")
+	if got := reasonGaugeValue(points, "UPSTREAM_UNREACHABLE"); got != 0 {
+		t.Fatalf("stale upstream unreachable reason = %v, want 0", got)
+	}
+	if got := reasonGaugeValue(points, "CREDENTIALS_MISSING"); got != 1 {
+		t.Fatalf("current credentials reason = %v, want 1", got)
+	}
+}
+
 func TestVendorCollectedGaugeRecordsOTelAttributeSets(t *testing.T) {
 	t.Parallel()
 
-	metrics, reader := newTestVendorObservabilityMetrics(t)
+	metrics, reader := newTestSurfaceObservabilityMetrics(t)
 	metrics.recordCollectorValues("cerebras", "account-a", []ObservabilityMetricRow{{
 		MetricName: "gen_ai.provider.quota.limit.test",
 		Value:      100,
@@ -100,7 +117,7 @@ func TestVendorCollectedGaugeRecordsOTelAttributeSets(t *testing.T) {
 	}
 }
 
-func newTestVendorObservabilityMetrics(t *testing.T) (*observabilityMetrics, *sdkmetric.ManualReader) {
+func newTestSurfaceObservabilityMetrics(t *testing.T) (*observabilityMetrics, *sdkmetric.ManualReader) {
 	t.Helper()
 	meter, reader := newTestMeter(t)
 	return &observabilityMetrics{
@@ -148,17 +165,27 @@ func attributeSet(attrs []attribute.KeyValue) map[string]string {
 	return labels
 }
 
+func reasonGaugeValue(points []metricdata.DataPoint[float64], reason string) float64 {
+	for _, point := range points {
+		labels := attributeSet(point.Attributes.ToSlice())
+		if labels["reason"] == reason {
+			return point.Value
+		}
+	}
+	return 0
+}
+
 func TestSanitizeVendorCollectorLabelsDropsInstanceLabels(t *testing.T) {
 	t.Parallel()
 
 	m := &observabilityMetrics{ownerLabel: "vendor_id"}
 	labels := m.sanitizeCollectorLabels(map[string]string{
-		"provider_surface_binding_id": "instance-1",
-		"instance_id":                 "instance-1",
-		"model_id":                    "gemini-2.5-pro",
+		"surface_id":  "instance-1",
+		"instance_id": "instance-1",
+		"model_id":    "gemini-2.5-pro",
 	})
-	if _, ok := labels["provider_surface_binding_id"]; ok {
-		t.Fatal("provider_surface_binding_id should be dropped")
+	if _, ok := labels["surface_id"]; ok {
+		t.Fatal("surface_id should be dropped")
 	}
 	if _, ok := labels["instance_id"]; ok {
 		t.Fatal("instance_id should be dropped")

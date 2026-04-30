@@ -7,6 +7,7 @@ import (
 
 	"code-code.internal/go-contract/domainerror"
 	managementv1 "code-code.internal/go-contract/platform/management/v1"
+	providerv1 "code-code.internal/go-contract/provider/v1"
 )
 
 func (s *Service) List(ctx context.Context) ([]*managementv1.ProviderView, error) {
@@ -34,7 +35,7 @@ func (s *Service) getProviderProjection(ctx context.Context, providerID string) 
 	if err != nil {
 		return nil, err
 	}
-	return s.decorate(ctx, providerProjectionFromProvider(provider)), nil
+	return s.providerProjectionFromProvider(ctx, provider), nil
 }
 
 func (s *Service) listProviderProjections(ctx context.Context) ([]*ProviderProjection, error) {
@@ -44,10 +45,29 @@ func (s *Service) listProviderProjections(ctx context.Context) ([]*ProviderProje
 	}
 	items := make([]*ProviderProjection, 0, len(providers))
 	for _, provider := range providers {
-		items = append(items, providerProjectionFromProvider(provider))
+		items = append(items, s.providerProjectionFromProvider(ctx, provider))
 	}
 	slices.SortFunc(items, compareProviderProjections)
-	return s.decorateAll(ctx, items), nil
+	return items, nil
+}
+
+func (s *Service) providerProjectionFromProvider(ctx context.Context, provider *providerv1.Provider) *ProviderProjection {
+	return providerProjectionFromProvider(provider, s.providerSurfaceForProjection(ctx, provider))
+}
+
+func (s *Service) providerSurfaceForProjection(ctx context.Context, provider *providerv1.Provider) *providerv1.ProviderSurface {
+	if s == nil || s.surfaces == nil || provider == nil {
+		return nil
+	}
+	surfaceID := strings.TrimSpace(provider.GetSurfaceId())
+	if surfaceID == "" {
+		return nil
+	}
+	surface, err := s.surfaces.Get(ctx, surfaceID)
+	if err != nil {
+		return nil
+	}
+	return surface
 }
 
 func providerViews(projections []*ProviderProjection) []*managementv1.ProviderView {
@@ -56,17 +76,4 @@ func providerViews(projections []*ProviderProjection) []*managementv1.ProviderVi
 		items = append(items, projection.Proto())
 	}
 	return items
-}
-
-func (s *Service) decorate(ctx context.Context, projection *ProviderProjection) *ProviderProjection {
-	items := s.decorateAll(ctx, []*ProviderProjection{projection})
-	if len(items) == 0 {
-		return projection
-	}
-	return items[0]
-}
-
-func (s *Service) decorateAll(ctx context.Context, projections []*ProviderProjection) []*ProviderProjection {
-	projections = newProviderIconRuntime(s.vendors, s.cliDefs).Apply(ctx, projections)
-	return newCredentialSubjectSummaryRuntime(s.credentials).Apply(ctx, projections)
 }

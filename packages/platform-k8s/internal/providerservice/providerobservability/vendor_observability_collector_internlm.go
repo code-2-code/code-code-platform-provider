@@ -4,11 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
-
-	"code-code.internal/platform-k8s/internal/egressauth"
 )
 
 const (
@@ -28,7 +25,6 @@ func init() {
 
 // NewInternlmObservabilityCollector returns a collector that probes
 // InternLM (书生) daily token quota and usage via the console statistics API.
-// Requires one management-plane JWT token resolved from account override or vendor fallback credential.
 func NewInternlmObservabilityCollector() ObservabilityCollector {
 	return &internlmObservabilityCollector{}
 }
@@ -39,45 +35,19 @@ func (c *internlmObservabilityCollector) CollectorID() string {
 	return internlmCollectorID
 }
 
-func (c *internlmObservabilityCollector) AuthAdapterID() string {
-	return egressauth.AuthAdapterBearerSessionID
-}
-
 func (c *internlmObservabilityCollector) Collect(ctx context.Context, input ObservabilityCollectInput) (*ObservabilityCollectResult, error) {
-	if input.HTTPClient == nil {
-		return nil, fmt.Errorf("providerobservability: internlm quotas: http client is nil")
-	}
-
-	token := observabilityCredentialToken(input.ObservabilityCredential)
-	if token == "" {
-		return nil, unauthorizedObservabilityError("internlm quotas: jwt token is required; configure provider observability authentication")
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, internlmStatisticsURL, strings.NewReader("{}"))
+	result, err := executeHTTPProbe(ctx, httpProbeSpec{
+		CollectorName: "internlm quotas",
+		URL:           internlmStatisticsURL,
+		Method:        http.MethodPost,
+		Body:          strings.NewReader("{}"),
+		HTTPClient:    input.HTTPClient,
+		ExtraHeaders:  map[string]string{"Content-Type": "application/json"},
+	})
 	if err != nil {
-		return nil, fmt.Errorf("providerobservability: internlm quotas: create request: %w", err)
+		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := input.HTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("providerobservability: internlm quotas: execute request: %w", err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, observabilityMaxBodyReadSize))
-
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, unauthorizedObservabilityError(
-			fmt.Sprintf("internlm quotas: unauthorized: status %d %s", resp.StatusCode, strings.TrimSpace(string(body))),
-		)
-	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("providerobservability: internlm quotas: failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	rows, err := parseInternlmStatisticsGaugeRows(body)
+	rows, err := parseInternlmStatisticsGaugeRows(result.Body)
 	if err != nil {
 		return nil, err
 	}

@@ -60,19 +60,18 @@ func TestOpenRouterObservabilityCollectorCollect(t *testing.T) {
 
 	collector := NewOpenRouterObservabilityCollector()
 	result, err := collector.Collect(context.Background(), ObservabilityCollectInput{
-		OwnerID:                 "openrouter",
-		ProviderID:               "acc123",
-		ProviderSurfaceBindingID: "inst123",
-		APIKey:                   "sk-or-v1-mockapikey123",
-		HTTPClient:               mockClient,
+		SchemaID:    "openrouter",
+		ProviderID: "acc123",
+		SurfaceID:  "inst123",
+		HTTPClient: mockClient,
 	})
 
 	if err != nil {
 		t.Fatalf("Collect() error = %v", err)
 	}
 
-	if got, want := authHeader, "Bearer sk-or-v1-mockapikey123"; got != want {
-		t.Fatalf("Authorization header = %q, want %q", got, want)
+	if got := authHeader; got != "" {
+		t.Fatalf("Authorization header = %q, want empty before egress auth injection", got)
 	}
 
 	// We expect 4 items from the first model, 4 from the second model, and 1 from the third (only requests > 0).

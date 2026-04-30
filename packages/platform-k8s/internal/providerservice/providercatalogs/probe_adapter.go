@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	apiprotocolv1 "code-code.internal/go-contract/api_protocol/v1"
-	"code-code.internal/platform-k8s/internal/modelservice/modelcatalogdiscovery"
+	"code-code.internal/platform-k8s/internal/platform/modelcatalogdiscovery"
 )
 
 // materializerProbe adapts CatalogProbeExecutor to the ModelIDProbe interface
@@ -23,12 +23,12 @@ func NewMaterializerProbe(executor *CatalogProbeExecutor) ModelIDProbe {
 func (p *materializerProbe) ProbeModelIDs(ctx context.Context, request ProbeRequest) ([]string, error) {
 	protocol := parseProtocol(request.Protocol)
 	internal := CatalogProbeRequest{
-		ProbeID:                  request.ProbeID,
-		Protocol:                 protocol,
-		BaseURL:                  strings.TrimSpace(request.BaseURL),
-		ProviderSurfaceBindingID: strings.TrimSpace(request.ProviderSurfaceBindingID),
-		Operation:                modelcatalogdiscovery.DefaultAPIKeyDiscoveryOperation(protocol),
-		ConcurrencyKey:           strings.TrimSpace(request.TargetID),
+		ProbeID:        request.ProbeID,
+		Protocol:       protocol,
+		BaseURL:        strings.TrimSpace(request.BaseURL),
+		SurfaceID:      strings.TrimSpace(request.SurfaceID),
+		Operation:      modelcatalogdiscovery.DefaultAPIKeyDiscoveryOperation(protocol),
+		ConcurrencyKey: strings.TrimSpace(request.TargetID),
 	}
 	return p.executor.ProbeModelIDs(ctx, internal)
 }

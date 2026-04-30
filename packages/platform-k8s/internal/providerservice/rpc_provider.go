@@ -10,45 +10,11 @@ import (
 )
 
 func (s *Server) UpdateProvider(ctx context.Context, request *providerservicev1.UpdateProviderRequest) (*providerservicev1.UpdateProviderResponse, error) {
-	provider, err := s.providers.Update(ctx, request.GetProviderId(), providers.UpdateProviderCommand{DisplayName: request.GetDisplayName()})
+	provider, err := s.providers.Update(ctx, request.GetProviderId(), providers.UpdateProviderCommand{DisplayName: request.GetProvider().GetDisplayName()})
 	if err != nil {
 		return nil, grpcError(err)
 	}
 	return &providerservicev1.UpdateProviderResponse{Provider: providerViewToService(provider)}, nil
-}
-
-func (s *Server) UpdateProviderAuthentication(ctx context.Context, request *providerservicev1.UpdateProviderAuthenticationRequest) (*providerservicev1.UpdateProviderAuthenticationResponse, error) {
-	switch request.GetAuthMaterial().(type) {
-	case *providerservicev1.UpdateProviderAuthenticationRequest_CliOauth:
-		provider, err := s.providers.Get(ctx, request.GetProviderId())
-		if err != nil {
-			return nil, grpcError(err)
-		}
-		session, err := s.providerConnect.Reauthorize(ctx, providerConnectProviderFromTransport(provider))
-		if err != nil {
-			return nil, grpcError(err)
-		}
-		return &providerservicev1.UpdateProviderAuthenticationResponse{Outcome: &providerservicev1.UpdateProviderAuthenticationResponse_Session{Session: providerConnectSessionViewToTransport(session)}}, nil
-	default:
-		apiKey := request.GetApiKey()
-		response, err := s.providers.UpdateAPIKeyAuthentication(ctx, request.GetProviderId(), providers.UpdateAPIKeyAuthenticationCommand{APIKey: apiKey.GetApiKey()})
-		if err != nil {
-			return nil, grpcError(err)
-		}
-		return updateProviderAuthenticationResponseToService(response), nil
-	}
-}
-
-func (s *Server) UpdateProviderObservabilityAuthentication(ctx context.Context, request *providerservicev1.UpdateProviderObservabilityAuthenticationRequest) (*providerservicev1.UpdateProviderObservabilityAuthenticationResponse, error) {
-	command, err := s.observabilityAuthenticationCommand(ctx, request.GetProviderId(), request.GetSessionMaterial())
-	if err != nil {
-		return nil, grpcError(err)
-	}
-	provider, err := s.providers.UpdateObservabilityAuthentication(ctx, request.GetProviderId(), command)
-	if err != nil {
-		return nil, grpcError(err)
-	}
-	return &providerservicev1.UpdateProviderObservabilityAuthenticationResponse{Provider: providerViewToService(provider)}, nil
 }
 
 func (s *Server) DeleteProvider(ctx context.Context, request *providerservicev1.DeleteProviderRequest) (*providerservicev1.DeleteProviderResponse, error) {
@@ -56,57 +22,6 @@ func (s *Server) DeleteProvider(ctx context.Context, request *providerservicev1.
 		return nil, grpcError(err)
 	}
 	return &providerservicev1.DeleteProviderResponse{Status: actionStatusOK}, nil
-}
-
-func (s *Server) ListProviderSurfaceBindings(ctx context.Context, _ *providerservicev1.ListProviderSurfaceBindingsRequest) (*providerservicev1.ListProviderSurfaceBindingsResponse, error) {
-	items, err := s.providerSurfaceBindings.ListProviderSurfaceBindings(ctx)
-	if err != nil {
-		return nil, grpcError(err)
-	}
-	return &providerservicev1.ListProviderSurfaceBindingsResponse{Items: providerSurfaceBindingViewsToService(items)}, nil
-}
-
-func (s *Server) CreateProviderSurfaceBinding(ctx context.Context, request *providerservicev1.CreateProviderSurfaceBindingRequest) (*providerservicev1.CreateProviderSurfaceBindingResponse, error) {
-	item, err := s.providerSurfaceBindings.CreateProviderSurfaceBinding(ctx, request.GetSurface().GetProviderId(), providerSurfaceBindingFromUpsertRequest(request.GetSurface()))
-	if err != nil {
-		return nil, grpcError(err)
-	}
-	return &providerservicev1.CreateProviderSurfaceBindingResponse{Surface: providerSurfaceBindingViewToService(item)}, nil
-}
-
-func (s *Server) UpdateProviderSurfaceBinding(ctx context.Context, request *providerservicev1.UpdateProviderSurfaceBindingRequest) (*providerservicev1.UpdateProviderSurfaceBindingResponse, error) {
-	item, err := s.providerSurfaceBindings.UpdateProviderSurfaceBinding(ctx, request.GetSurfaceId(), providerSurfaceBindingFromUpsertRequest(request.GetSurface()))
-	if err != nil {
-		return nil, grpcError(err)
-	}
-	return &providerservicev1.UpdateProviderSurfaceBindingResponse{Surface: providerSurfaceBindingViewToService(item)}, nil
-}
-
-func (s *Server) DeleteProviderSurfaceBinding(ctx context.Context, request *providerservicev1.DeleteProviderSurfaceBindingRequest) (*providerservicev1.DeleteProviderSurfaceBindingResponse, error) {
-	if err := s.providerSurfaceBindings.DeleteProviderSurfaceBinding(ctx, request.GetSurfaceId()); err != nil {
-		return nil, grpcError(err)
-	}
-	return &providerservicev1.DeleteProviderSurfaceBindingResponse{Status: actionStatusOK}, nil
-}
-
-func (s *Server) ConnectProvider(ctx context.Context, request *providerservicev1.ConnectProviderRequest) (*providerservicev1.ConnectProviderResponse, error) {
-	command, err := providerConnectCommandFromRequest(request)
-	if err != nil {
-		return nil, grpcError(err)
-	}
-	result, err := s.providerConnect.Connect(ctx, command)
-	if err != nil {
-		return nil, grpcError(err)
-	}
-	return connectProviderResponseFromResult(result), nil
-}
-
-func (s *Server) GetProviderConnectSession(ctx context.Context, request *providerservicev1.GetProviderConnectSessionRequest) (*providerservicev1.GetProviderConnectSessionResponse, error) {
-	session, err := s.providerConnect.GetSession(ctx, request.GetSessionId())
-	if err != nil {
-		return nil, grpcError(err)
-	}
-	return &providerservicev1.GetProviderConnectSessionResponse{Session: providerConnectSessionViewToTransport(session)}, nil
 }
 
 func (s *Server) ProbeProviderObservability(ctx context.Context, request *providerservicev1.ProbeProviderObservabilityRequest) (*providerservicev1.ProbeProviderObservabilityResponse, error) {
@@ -135,13 +50,6 @@ func (s *Server) ProbeProviderObservability(ctx context.Context, request *provid
 		response.ProviderId = providerIDs[0]
 	}
 	return response, nil
-}
-
-func (s *Server) BindProviderCatalogs(ctx context.Context, _ *providerservicev1.BindProviderCatalogsRequest) (*providerservicev1.BindProviderCatalogsResponse, error) {
-	if err := s.runProviderCatalogBinding(ctx); err != nil {
-		return nil, grpcError(err)
-	}
-	return &providerservicev1.BindProviderCatalogsResponse{Status: actionStatusOK}, nil
 }
 
 func (s *Server) WatchProviderStatusEvents(

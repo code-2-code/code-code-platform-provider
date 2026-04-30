@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -21,14 +20,14 @@ import (
 	"code-code.internal/platform-k8s/internal/platform/telemetry"
 	"code-code.internal/platform-k8s/internal/platform/temporalruntime"
 	"code-code.internal/platform-k8s/internal/platform/triggerhttp"
+	"code-code.internal/platform-k8s/internal/providerpostconnect"
 	"code-code.internal/platform-k8s/internal/providerservice"
-	"code-code.internal/platform-k8s/internal/providerservice/providerconnect"
 	"connectrpc.com/connect"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -39,8 +38,6 @@ func main() {
 	addr := envOrDefault("PLATFORM_PROVIDER_SERVICE_GRPC_ADDR", ":8081")
 	httpAddr := envOrDefault("PLATFORM_PROVIDER_SERVICE_HTTP_ADDR", ":8080")
 	namespace := envOrDefault("PLATFORM_PROVIDER_SERVICE_NAMESPACE", "code-code")
-	authAddr := envOrDefault("PLATFORM_PROVIDER_SERVICE_AUTH_GRPC_ADDR", "platform-auth-service:8081")
-	modelAddr := envOrDefault("PLATFORM_PROVIDER_SERVICE_MODEL_GRPC_ADDR", "platform-model-service:8081")
 	internalActionToken := strings.TrimSpace(os.Getenv("PLATFORM_PROVIDER_SERVICE_INTERNAL_ACTION_TOKEN"))
 	databaseURL := firstEnv("PLATFORM_DATABASE_URL", "PLATFORM_PROVIDER_SERVICE_DATABASE_URL")
 
@@ -54,6 +51,7 @@ func main() {
 
 	scheme := runtime.NewScheme()
 	must(corev1.AddToScheme(scheme))
+	must(coordinationv1.AddToScheme(scheme))
 	must(platformk8s.AddToScheme(scheme))
 
 	config := ctrl.GetConfigOrDie()
@@ -63,17 +61,11 @@ func main() {
 	must(err)
 	defer statePool.Close()
 
-	authConn, err := grpc.NewClient(authAddr, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
-	must(err)
-	defer func() { _ = authConn.Close() }()
-	modelConn, err := grpc.NewClient(modelAddr, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
-	must(err)
-	defer func() { _ = modelConn.Close() }()
-	temporalConfig := temporalruntime.ConfigFromEnv(providerconnect.TemporalTaskQueue)
+	temporalConfig := temporalruntime.ConfigFromEnv(providerpostconnect.TemporalTaskQueue)
 	temporalClient, err := temporalruntime.Dial(context.Background(), temporalConfig)
 	must(err)
 	defer temporalClient.Close()
-	postConnectRuntime, err := providerconnect.NewTemporalPostConnectWorkflowRuntime(providerconnect.TemporalPostConnectWorkflowRuntimeConfig{
+	postConnectRuntime, err := providerpostconnect.NewTemporalWorkflowRuntime(providerpostconnect.TemporalWorkflowRuntimeConfig{
 		Client:                  temporalClient,
 		TaskQueue:               temporalConfig.TaskQueue,
 		PlatformNamespace:       namespace,
@@ -83,15 +75,11 @@ func main() {
 	must(err)
 
 	server, err := providerservice.NewServer(providerservice.Config{
-		Client:                             kubeClient,
-		Reader:                             kubeClient,
-		Namespace:                          namespace,
-		AuthConn:                           authConn,
-		ModelConn:                          modelConn,
-		StatePool:                          statePool,
-		ProviderConnectProviderHTTPBaseURL: postConnectRuntime.ProviderHTTPBaseURL(),
-		ProviderHostTelemetryMaxTargets:    envIntOrDefault("PLATFORM_PROVIDER_SERVICE_HOST_TELEMETRY_MAX_TARGETS", 200),
-		PostConnect:                        postConnectRuntime,
+		Client:                          kubeClient,
+		Reader:                          kubeClient,
+		Namespace:                       namespace,
+		StatePool:                       statePool,
+		ProviderHostTelemetryMaxTargets: envIntOrDefault("PLATFORM_PROVIDER_SERVICE_HOST_TELEMETRY_MAX_TARGETS", 200),
 	})
 	must(err)
 	temporalWorker := temporalruntime.NewWorker(temporalClient, temporalConfig.TaskQueue)
@@ -113,13 +101,6 @@ func main() {
 				}
 				return map[string]any{"provider_ids": body.ProviderIDs}, nil
 			},
-			"bind-provider-catalogs": func(ctx context.Context, _ triggerhttp.Request) (any, error) {
-				response, err := server.BindProviderCatalogs(ctx, &providerservicev1.BindProviderCatalogsRequest{})
-				if err != nil {
-					return nil, err
-				}
-				return map[string]string{"status": response.GetStatus()}, nil
-			},
 			"submit-provider-observability-probe": func(ctx context.Context, request triggerhttp.Request) (any, error) {
 				body, err := decodeProviderTriggerBody(request)
 				if err != nil {
@@ -139,7 +120,7 @@ func main() {
 	})
 	must(err)
 	if internalActionToken == "" {
-		log.Printf("internal action endpoints are disabled (env PLATFORM_PROVIDER_SERVICE_INTERNAL_ACTION_TOKEN is empty)")
+		slog.Info("internal action endpoints are disabled (env PLATFORM_PROVIDER_SERVICE_INTERNAL_ACTION_TOKEN is empty)")
 	}
 
 	listener, err := net.Listen("tcp", addr)
@@ -147,8 +128,8 @@ func main() {
 	httpListener, err := net.Listen("tcp", httpAddr)
 	must(err)
 	httpMux := http.NewServeMux()
-	_, providerConnectHandler := providerservicev1connect.NewProviderServiceHandler(providerConnectHTTPAdapter{Server: server})
-	httpMux.Handle(providerservicev1connect.ProviderServiceListVendorsProcedure, providerConnectHandler)
+	path, providerConnectHandler := providerservicev1connect.NewProviderServiceHandler(providerConnectHTTPAdapter{Server: server})
+	httpMux.Handle(path, providerConnectHandler)
 	httpMux.HandleFunc(providerservice.ProviderHostTelemetryTargetsPath, server.ServeProviderHostTelemetryTargets)
 	httpMux.Handle("/", triggerServer)
 	httpServer := &http.Server{Handler: httpMux}
@@ -169,12 +150,12 @@ func main() {
 	}()
 	go func() { serveErr <- grpcServer.Serve(listener) }()
 
-	log.Printf("platform-provider-service listening on %s (namespace=%s auth=%s model=%s http=%s)", addr, namespace, authAddr, modelAddr, httpAddr)
+	slog.Info("platform-provider-service listening", "addr", addr, "namespace", namespace, "http", httpAddr)
 	select {
 	case err := <-serveErr:
 		must(err)
 	case <-ctx.Done():
-		log.Println("shutting down platform-provider-service...")
+		slog.Info("shutting down platform-provider-service")
 		healthServer.SetServingStatus("", healthv1.HealthCheckResponse_NOT_SERVING)
 		healthServer.SetServingStatus(providerservicev1.ProviderService_ServiceDesc.ServiceName, healthv1.HealthCheckResponse_NOT_SERVING)
 		grpcServer.Stop()
@@ -271,6 +252,7 @@ func envIntOrDefault(key string, fallback int) int {
 
 func must(err error) {
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("fatal error", "error", err)
+		os.Exit(1)
 	}
 }

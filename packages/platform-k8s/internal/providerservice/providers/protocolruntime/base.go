@@ -12,9 +12,9 @@ import (
 )
 
 // BaseRuntime provides shared runtime lifecycle logic for provider
-// implementations that expose one preconfigured surface model catalog.
+// implementations that expose one preconfigured provider model catalog.
 type BaseRuntime struct {
-	Surface    *providerv1.ProviderSurfaceBinding
+	Provider   *providerv1.Provider
 	Credential *credentialcontract.ResolvedCredential
 	Now        func() time.Time
 
@@ -26,14 +26,13 @@ type BaseRuntime struct {
 // attempt a call. Model catalog discovery is asynchronous and is not a health
 // gate.
 func (r *BaseRuntime) HealthCheck(ctx context.Context) error {
-	if r == nil || r.Surface == nil {
+	if r == nil || r.Provider == nil {
 		return nil
 	}
-	return providerv1.ValidateProviderSurfaceRuntime(r.Surface.GetRuntime())
+	return providerv1.ValidateProviderSurfaceRuntime(r.Provider.GetRuntime())
 }
 
-// ListModels returns the configured surface model catalog for the bound
-// surface binding.
+// ListModels returns the configured model catalog for the bound provider.
 func (r *BaseRuntime) ListModels(ctx context.Context) (*providerv1.ProviderModelCatalog, error) {
 	r.mu.RLock()
 	if r.catalog != nil {
@@ -45,9 +44,9 @@ func (r *BaseRuntime) ListModels(ctx context.Context) (*providerv1.ProviderModel
 	return r.surfaceCatalog(ctx)
 }
 
-// surfaceCatalog returns the pre-configured surface catalog.
+// surfaceCatalog returns the pre-configured provider catalog.
 func (r *BaseRuntime) surfaceCatalog(_ context.Context) (*providerv1.ProviderModelCatalog, error) {
-	ec := r.Surface.GetRuntime().GetCatalog()
+	ec := r.Provider.GetRuntime().GetCatalog()
 	if ec == nil {
 		ec = &providerv1.ProviderModelCatalog{}
 	}

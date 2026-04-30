@@ -7,7 +7,7 @@ import (
 )
 
 // probeStateTracker manages throttle state and metric recording for one
-// observability runner. It is embedded by both VendorObservabilityRunner and
+// observability runner. It is embedded by both SurfaceObservabilityRunner and
 // OAuthObservabilityRunner to eliminate duplicated state management.
 type probeStateTracker struct {
 	metrics        *observabilityMetrics
@@ -30,8 +30,8 @@ func newProbeStateTracker(metrics *observabilityMetrics, defaultBackoff time.Dur
 	}
 }
 
-func (t *probeStateTracker) throttled(providerID string, providerSurfaceBindingID string, now time.Time) (bool, time.Time) {
-	stateKey := probeStateKey(providerID, providerSurfaceBindingID)
+func (t *probeStateTracker) throttled(providerID string, surfaceID string, now time.Time) (bool, time.Time) {
+	stateKey := probeStateKey(providerID, surfaceID)
 	if stateKey == "" {
 		return false, time.Time{}
 	}
@@ -47,8 +47,8 @@ func (t *probeStateTracker) throttled(providerID string, providerSurfaceBindingI
 	return false, state.nextAllowedAt
 }
 
-func (t *probeStateTracker) nextAllowed(providerID string, providerSurfaceBindingID string) time.Time {
-	stateKey := probeStateKey(providerID, providerSurfaceBindingID)
+func (t *probeStateTracker) nextAllowed(providerID string, surfaceID string) time.Time {
+	stateKey := probeStateKey(providerID, surfaceID)
 	if stateKey == "" {
 		return time.Time{}
 	}
@@ -76,9 +76,9 @@ func (t *probeStateTracker) recordState(
 		backoff = t.defaultBackoff
 	}
 	nextAllowedAt := now.Add(backoff)
-	stateKey := probeStateKey(result.ProviderID, result.ProviderSurfaceBindingID)
+	stateKey := probeStateKey(result.ProviderID, result.SurfaceID)
 	if stateKey == "" {
-		stateKey = probeStateKey("", result.ProviderSurfaceBindingID)
+		stateKey = probeStateKey("", result.SurfaceID)
 	}
 	t.mu.Lock()
 	t.states[stateKey] = probeState{
@@ -88,15 +88,15 @@ func (t *probeStateTracker) recordState(
 	t.mu.Unlock()
 	result.LastAttemptAt = timePointerCopy(&now)
 	result.NextAllowedAt = timePointerCopy(&nextAllowedAt)
-	t.metrics.record(result.OwnerID, result.ProviderID, trigger, result.Outcome, result.Reason, now, nextAllowedAt)
+	t.metrics.record(result.SchemaID, result.ProviderID, trigger, result.Outcome, result.Reason, now, nextAllowedAt)
 	return result
 }
 
-func probeStateKey(providerID string, providerSurfaceBindingID string) string {
+func probeStateKey(providerID string, surfaceID string) string {
 	if providerID := strings.TrimSpace(providerID); providerID != "" {
 		return "provider:" + providerID
 	}
-	if surfaceID := strings.TrimSpace(providerSurfaceBindingID); surfaceID != "" {
+	if surfaceID := strings.TrimSpace(surfaceID); surfaceID != "" {
 		return "surface:" + surfaceID
 	}
 	return ""

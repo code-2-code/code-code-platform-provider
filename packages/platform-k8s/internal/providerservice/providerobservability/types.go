@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	managementv1 "code-code.internal/go-contract/platform/management/v1"
+	providerv1 "code-code.internal/go-contract/provider/v1"
 )
 
 // Trigger identifies why an observability probe is requested.
@@ -20,8 +20,7 @@ const (
 type OwnerKind string
 
 const (
-	OwnerKindCLI    OwnerKind = "cli"
-	OwnerKindVendor OwnerKind = "vendor"
+	OwnerKindSurface OwnerKind = "surface"
 )
 
 // ProbeOutcome is the normalized observability probe outcome.
@@ -35,46 +34,46 @@ const (
 	ProbeOutcomeFailed      ProbeOutcome = "failed"
 )
 
-// ProbeTarget carries the provider account and owner package selected for one probe.
+// ProbeTarget carries the provider account and surface schema selected for one probe.
 type ProbeTarget struct {
-	ProviderID               string
-	ProviderSurfaceBindingID string
-	OwnerKind                OwnerKind
-	OwnerID                  string
+	ProviderID string
+	SurfaceID  string
+	OwnerKind  OwnerKind
+	SchemaID   string
 }
 
 // ProbeResult is the normalized active observability probe result.
 type ProbeResult struct {
-	OwnerKind                OwnerKind
-	OwnerID                  string
-	ProviderID               string
-	ProviderSurfaceBindingID string
-	Outcome                  ProbeOutcome
-	Message                  string
-	Reason                   string
-	LastAttemptAt            *time.Time
-	NextAllowedAt            *time.Time
+	OwnerKind     OwnerKind
+	SchemaID      string
+	ProviderID    string
+	SurfaceID     string
+	Outcome       ProbeOutcome
+	Message       string
+	Reason        string
+	LastAttemptAt *time.Time
+	NextAllowedAt *time.Time
 }
 
 // Capability owns one active observability family such as CLI OAuth or vendor API key.
 type Capability interface {
 	OwnerKind() OwnerKind
-	Supports(surface *managementv1.ProviderSurfaceBindingView) (ownerID string, ok bool)
+	Supports(ctx context.Context, provider *providerv1.Provider) (schemaID string, ok bool)
 	ProbeProvider(ctx context.Context, target ProbeTarget, trigger Trigger) (*ProbeResult, error)
 }
 
-type providerSurfaceBindingLister interface {
-	ListProviderSurfaceBindings(ctx context.Context) ([]*managementv1.ProviderSurfaceBindingView, error)
+type providerLister interface {
+	List(ctx context.Context) ([]*providerv1.Provider, error)
 }
 
 // Service dispatches provider observability probes without owning credential material.
 type Service struct {
-	providerSurfaceBindings providerSurfaceBindingLister
-	capabilities            []Capability
+	providers    providerLister
+	capabilities []Capability
 }
 
 // Config groups provider observability dependencies.
 type Config struct {
-	ProviderSurfaceBindings providerSurfaceBindingLister
-	Capabilities            []Capability
+	Providers    providerLister
+	Capabilities []Capability
 }

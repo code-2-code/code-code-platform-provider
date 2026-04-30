@@ -11,11 +11,11 @@ import (
 func TestCodexObservabilityCollectorCollectUsage(t *testing.T) {
 	previousURL := codexUsageProbeURL
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got, want := r.Header.Get("Authorization"), "Bearer access-token"; got != want {
-			t.Fatalf("authorization = %q, want %q", got, want)
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("authorization = %q, want empty before egress auth injection", got)
 		}
-		if got, want := r.Header.Get("ChatGPT-Account-Id"), "account-123"; got != want {
-			t.Fatalf("chatgpt-account-id = %q, want %q", got, want)
+		if got := r.Header.Get("ChatGPT-Account-Id"); got != "" {
+			t.Fatalf("chatgpt-account-id = %q, want empty before egress auth injection", got)
 		}
 		if got, want := r.Header.Get("User-Agent"), "codex_cli_rs/0.121.0"; got != want {
 			t.Fatalf("user-agent = %q, want %q", got, want)
@@ -28,12 +28,8 @@ func TestCodexObservabilityCollectorCollectUsage(t *testing.T) {
 
 	collector := NewCodexObservabilityCollector()
 	result, err := collector.Collect(context.Background(), ObservabilityCollectInput{
-		AccessToken:            "access-token",
 		HTTPClient:             server.Client(),
 		ObservabilityUserAgent: "codex_cli_rs/0.121.0",
-		MaterialValues: map[string]string{
-			materialKeyAccountID: "account-123",
-		},
 	})
 	if err != nil {
 		t.Fatalf("Collect() error = %v", err)
@@ -75,20 +71,6 @@ func TestCodexUsageLimitGaugeValuesFallback429(t *testing.T) {
 	}
 	if got, want := values[codexPlanTypeCodeMetric], 0.0; got != want {
 		t.Fatalf("plan type code = %v, want %v", got, want)
-	}
-}
-
-func TestCodexObservabilityCollectorRequiresAccountID(t *testing.T) {
-	collector := NewCodexObservabilityCollector()
-	_, err := collector.Collect(context.Background(), ObservabilityCollectInput{
-		AccessToken: "access-token",
-		HTTPClient:  http.DefaultClient,
-	})
-	if err == nil {
-		t.Fatal("Collect() error = nil, want error")
-	}
-	if !isObservabilityUnauthorizedError(err) {
-		t.Fatalf("Collect() error = %T, want unauthorized error", err)
 	}
 }
 

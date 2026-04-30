@@ -14,8 +14,10 @@ func TestRuntimeListModelsUsesConfiguredSurfaceCatalog(t *testing.T) {
 
 	provider := NewProvider()
 	runtime, err := provider.NewRuntime(
-		&providerv1.ProviderSurfaceBinding{
-			SurfaceId: "gemini",
+		&providerv1.Provider{
+			ProviderId:  "provider-gemini",
+			DisplayName: "Google Gemini",
+			SurfaceId:   "gemini",
 			Runtime: &providerv1.ProviderSurfaceRuntime{
 				DisplayName: "Google Gemini",
 				Origin:      providerv1.ProviderSurfaceOrigin_PROVIDER_SURFACE_ORIGIN_DERIVED,

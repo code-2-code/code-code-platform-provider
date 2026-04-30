@@ -19,10 +19,10 @@ func TestCatalogProbeMetricsRecordLowCardinalityAttributes(t *testing.T) {
 
 	metrics, reader := newTestCatalogProbeMetrics(t)
 	metrics.record(CatalogProbeRequest{
-		ProbeID:                  "vendor.openai",
-		Protocol:                 apiprotocolv1.Protocol_PROTOCOL_OPENAI_COMPATIBLE,
-		BaseURL:                  "https://api.openai.com/v1",
-		ProviderSurfaceBindingID: "surface-1",
+		ProbeID:   "vendor.openai",
+		Protocol:  apiprotocolv1.Protocol_PROTOCOL_OPENAI_COMPATIBLE,
+		BaseURL:   "https://api.openai.com/v1",
+		SurfaceID: "surface-1",
 	}, &modelcatalogdiscoveryv1.ModelCatalogDiscoveryOperation{
 		ResponseKind: modelcatalogdiscoveryv1.ModelCatalogDiscoveryResponseKind_MODEL_CATALOG_DISCOVERY_RESPONSE_KIND_OPENAI_MODELS,
 		Security: []*modelcatalogdiscoveryv1.ModelCatalogDiscoverySecurityRequirement{{
@@ -40,8 +40,8 @@ func TestCatalogProbeMetricsRecordLowCardinalityAttributes(t *testing.T) {
 	if got, want := labels["probe_id"], "vendor.openai"; got != want {
 		t.Fatalf("probe_id = %q, want %q", got, want)
 	}
-	if got, want := labels["auth"], "credential"; got != want {
-		t.Fatalf("auth = %q, want %q", got, want)
+	if got, want := labels["security"], "declared"; got != want {
+		t.Fatalf("security = %q, want %q", got, want)
 	}
 	if got, want := labels["outcome"], "success"; got != want {
 		t.Fatalf("outcome = %q, want %q", got, want)
@@ -49,8 +49,8 @@ func TestCatalogProbeMetricsRecordLowCardinalityAttributes(t *testing.T) {
 	if _, exists := labels["base_url"]; exists {
 		t.Fatal("base_url label should not be exported")
 	}
-	if _, exists := labels["credential_id"]; exists {
-		t.Fatal("credential_id label should not be exported")
+	if _, exists := labels["provider_credential_id"]; exists {
+		t.Fatal("provider_credential_id label should not be exported")
 	}
 }
 

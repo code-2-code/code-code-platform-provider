@@ -12,9 +12,6 @@ import (
 // ProviderSurface describes one stable provider capability surface.
 type ProviderSurface = providerv1.ProviderSurface
 
-// ProviderSurfaceBinding describes one configured callable surface on a provider account.
-type ProviderSurfaceBinding = providerv1.ProviderSurfaceBinding
-
 // ProviderModelCatalog describes the models currently available through one surface.
 type ProviderModelCatalog = providerv1.ProviderModelCatalog
 
@@ -27,10 +24,10 @@ type Provider interface {
 	// Surface returns the stable provider surface metadata.
 	Surface() *ProviderSurface
 
-	// NewRuntime creates one runtime bound to the supplied account surface and
+	// NewRuntime creates one runtime bound to the supplied configured provider and
 	// resolved credential. credential may be nil when the bound surface does
 	// not reference a credential.
-	NewRuntime(surface *ProviderSurfaceBinding, credential *credentialcontract.ResolvedCredential) (ProviderRuntime, error)
+	NewRuntime(provider *providerv1.Provider, credential *credentialcontract.ResolvedCredential) (ProviderRuntime, error)
 }
 
 // ProviderRuntime is the platform-driven runtime for one provider surface.
@@ -45,8 +42,8 @@ type ProviderRuntime interface {
 	Close(ctx context.Context) error
 }
 
-// ProviderRegistry lists the provider account surfaces available to the platform.
+// ProviderRegistry lists the configured providers available to the platform.
 type ProviderRegistry interface {
-	// ListProviderSurfaceBindings returns the currently selectable provider account surfaces.
-	ListProviderSurfaceBindings(ctx context.Context) ([]*ProviderSurfaceBinding, error)
+	// ListProviders returns the currently selectable configured providers.
+	ListProviders(ctx context.Context) ([]*providerv1.Provider, error)
 }

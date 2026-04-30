@@ -8,6 +8,7 @@ import (
 
 	"code-code.internal/go-contract/domainerror"
 	managementv1 "code-code.internal/go-contract/platform/management/v1"
+	providerservicev1 "code-code.internal/go-contract/platform/provider/v1"
 )
 
 func NewService(config Config) (*Service, error) {
@@ -16,12 +17,12 @@ func NewService(config Config) (*Service, error) {
 		return nil, err
 	}
 	switch {
-	case config.ProviderSurfaceBindings == nil:
-		return nil, fmt.Errorf("platformk8s/providerobservability: provider surface binding lister is nil")
+	case config.Providers == nil:
+		return nil, fmt.Errorf("platformk8s/providerobservability: provider lister is nil")
 	}
 	return &Service{
-		providerSurfaceBindings: config.ProviderSurfaceBindings,
-		capabilities:            capabilities,
+		providers:    config.Providers,
+		capabilities: capabilities,
 	}, nil
 }
 
@@ -70,16 +71,16 @@ func (s *Service) ProbeProvider(
 	}
 	return &managementv1.ProbeProviderObservabilityResponse{
 		ProviderId: target.providerID,
-		Outcome:    managementv1.ProviderOAuthObservabilityProbeOutcome_PROVIDER_O_AUTH_OBSERVABILITY_PROBE_OUTCOME_UNSUPPORTED,
+		Outcome:    providerservicev1.ProviderOAuthObservabilityProbeOutcome_PROVIDER_O_AUTH_OBSERVABILITY_PROBE_OUTCOME_UNSUPPORTED,
 		Message:    "provider has no supported observability owner",
 	}, nil
 }
 
 type providerProbeTarget struct {
-	providerID               string
-	providerSurfaceBindingID string
-	ownerID                  string
-	capability               Capability
+	providerID string
+	surfaceID  string
+	schemaID   string
+	capability Capability
 }
 
 func (t providerProbeTarget) probeTarget() ProbeTarget {
@@ -88,10 +89,10 @@ func (t providerProbeTarget) probeTarget() ProbeTarget {
 		ownerKind = t.capability.OwnerKind()
 	}
 	return ProbeTarget{
-		ProviderID:               t.providerID,
-		ProviderSurfaceBindingID: t.providerSurfaceBindingID,
-		OwnerKind:                ownerKind,
-		OwnerID:                  t.ownerID,
+		ProviderID: t.providerID,
+		SurfaceID:  t.surfaceID,
+		OwnerKind:  ownerKind,
+		SchemaID:   t.schemaID,
 	}
 }
 
@@ -100,7 +101,7 @@ func (s *Service) findProvider(ctx context.Context, providerID string) (*provide
 	if trimmedID == "" {
 		return nil, fmt.Errorf("platformk8s/providerobservability: provider id is empty")
 	}
-	items, err := s.providerSurfaceBindings.ListProviderSurfaceBindings(ctx)
+	items, err := s.providers.List(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -111,14 +112,14 @@ func (s *Service) findProvider(ctx context.Context, providerID string) (*provide
 		}
 		found = true
 		for _, capability := range s.capabilities {
-			ownerID, ok := capability.Supports(item)
-			ownerID = strings.TrimSpace(ownerID)
-			if ok && ownerID != "" {
+			schemaID, ok := capability.Supports(ctx, item)
+			schemaID = strings.TrimSpace(schemaID)
+			if ok && schemaID != "" {
 				return &providerProbeTarget{
-					providerID:               trimmedID,
-					providerSurfaceBindingID: strings.TrimSpace(item.GetSurfaceId()),
-					ownerID:                  ownerID,
-					capability:               capability,
+					providerID: trimmedID,
+					surfaceID:  strings.TrimSpace(item.GetSurfaceId()),
+					schemaID:   schemaID,
+					capability: capability,
 				}, nil
 			}
 		}

@@ -8,9 +8,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
-	"code-code.internal/platform-k8s/internal/supportservice/clidefinitions/codeassist"
+	"code-code.internal/platform-k8s/internal/platform/codeassist"
 )
 
 const (
@@ -40,23 +39,19 @@ func (c *antigravityObservabilityCollector) CollectorID() string {
 }
 
 func (c *antigravityObservabilityCollector) Collect(ctx context.Context, input ObservabilityCollectInput) (*ObservabilityCollectResult, error) {
-	if strings.TrimSpace(input.AccessToken) == "" {
-		return nil, unauthorizedObservabilityError("antigravity access token is empty")
-	}
-	projectID := strings.TrimSpace(input.MaterialValues[materialKeyProjectID])
-	codeAssistPayload, err := codeassist.LoadAntigravityCodeAssistWithProject(ctx, input.HTTPClient, input.AccessToken, projectID)
+	projectID := ""
+	codeAssistPayload, err := codeassist.LoadAntigravityCodeAssistWithProject(ctx, input.HTTPClient, "", projectID)
 	if err != nil {
 		return nil, err
 	}
 	if resolvedProjectID := codeassist.GeminiProjectID(codeAssistPayload); resolvedProjectID != "" {
 		projectID = resolvedProjectID
 	}
-	tierName := codeassist.AntigravityTierName(codeAssistPayload)
 	if projectID == "" {
 		if !codeassist.AntigravityShouldOnboard(codeAssistPayload) {
 			return nil, codeassist.AntigravityProjectResolutionError(codeAssistPayload)
 		}
-		projectID, err = codeassist.OnboardAntigravityUserWithProject(ctx, input.HTTPClient, input.AccessToken, codeassist.AntigravityDefaultTierID(codeAssistPayload), projectID)
+		projectID, err = codeassist.OnboardAntigravityUserWithProject(ctx, input.HTTPClient, "", codeassist.AntigravityDefaultTierID(codeAssistPayload), projectID)
 		if err != nil {
 			if codeassist.IsAntigravityOnboardMissingProjectID(err) {
 				return nil, codeassist.AntigravityProjectResolutionError(codeAssistPayload)
@@ -67,23 +62,16 @@ func (c *antigravityObservabilityCollector) Collect(ctx context.Context, input O
 	if projectID == "" {
 		return nil, fmt.Errorf("providerobservability: antigravity project id is empty")
 	}
-	payload, err := loadAntigravityAvailableModels(ctx, input.HTTPClient, input.AccessToken, projectID, input.ModelCatalogUserAgent)
+	payload, err := loadAntigravityAvailableModels(ctx, input.HTTPClient, projectID, input.ModelCatalogUserAgent)
 	if err != nil {
 		return nil, err
 	}
-	backfillValues := map[string]string{
-		materialKeyProjectID: projectID,
-	}
-	if tierName != "" {
-		backfillValues[materialKeyTierName] = tierName
-	}
 	return &ObservabilityCollectResult{
-		GaugeRows:                antigravityQuotaRows(payload),
-		CredentialBackfillValues: backfillValues,
+		GaugeRows: antigravityQuotaRows(payload),
 	}, nil
 }
 
-func loadAntigravityAvailableModels(ctx context.Context, httpClient *http.Client, accessToken, projectID string, userAgent string) (map[string]any, error) {
+func loadAntigravityAvailableModels(ctx context.Context, httpClient *http.Client, projectID string, userAgent string) (map[string]any, error) {
 	body, err := json.Marshal(map[string]string{"project": strings.TrimSpace(projectID)})
 	if err != nil {
 		return nil, fmt.Errorf("providerobservability: marshal antigravity fetchAvailableModels request: %w", err)
@@ -96,7 +84,6 @@ func loadAntigravityAvailableModels(ctx context.Context, httpClient *http.Client
 		}
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("Accept", "application/json")
-		request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(accessToken))
 		request.Header.Set("User-Agent", antigravityModelCatalogUserAgent(userAgent))
 		request.Header.Set("X-Goog-Api-Client", codeassist.AntigravityAPIClient)
 		request.Header.Set("Client-Metadata", codeassist.AntigravityClientMetadata)
@@ -183,32 +170,6 @@ func antigravityQuotaModelSupported(modelID string) bool {
 		strings.HasPrefix(normalized, "gpt") ||
 		strings.HasPrefix(normalized, "image") ||
 		strings.HasPrefix(normalized, "imagen")
-}
-
-func parseRFC3339Timestamp(raw any) (time.Time, bool) {
-	value, _ := raw.(string)
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return time.Time{}, false
-	}
-	parsed, err := time.Parse(time.RFC3339, trimmed)
-	if err != nil {
-		parsed, err = time.Parse(time.RFC3339Nano, trimmed)
-		if err != nil {
-			return time.Time{}, false
-		}
-	}
-	return parsed.UTC(), true
-}
-
-func clampPercent(value float64) float64 {
-	if value < 0 {
-		return 0
-	}
-	if value > 100 {
-		return 100
-	}
-	return value
 }
 
 func antigravityModelCatalogUserAgent(userAgent string) string {

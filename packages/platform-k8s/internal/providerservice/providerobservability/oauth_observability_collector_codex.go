@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -40,49 +39,27 @@ func (c *codexObservabilityCollector) CollectorID() string {
 }
 
 func (c *codexObservabilityCollector) Collect(ctx context.Context, input ObservabilityCollectInput) (*ObservabilityCollectResult, error) {
-	if strings.TrimSpace(input.AccessToken) == "" {
-		return nil, unauthorizedObservabilityError("codex access token is empty")
-	}
-	if input.HTTPClient == nil {
-		return nil, fmt.Errorf("providerobservability: codex oauth observability http client is nil")
-	}
-	accountID := strings.TrimSpace(input.MaterialValues[materialKeyAccountID])
-	if accountID == "" {
-		return nil, unauthorizedObservabilityError("codex chatgpt account id is empty")
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, codexUsageProbeURL, nil)
+	result, err := executeHTTPProbe(ctx, httpProbeSpec{
+		CollectorName: "codex usage operation",
+		URL:           codexUsageProbeURL,
+		HTTPClient:    input.HTTPClient,
+		ExtraHeaders: map[string]string{
+			"User-Agent": codexObservabilityUserAgent(input),
+		},
+	})
 	if err != nil {
-		return nil, fmt.Errorf("providerobservability: create codex usage operation request: %w", err)
-	}
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(input.AccessToken))
-	request.Header.Set("ChatGPT-Account-Id", accountID)
-	request.Header.Set("User-Agent", codexObservabilityUserAgent(input))
-
-	response, err := input.HTTPClient.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("providerobservability: execute codex usage operation request: %w", err)
-	}
-	defer response.Body.Close()
-	bodyBytes, _ := io.ReadAll(io.LimitReader(response.Body, observabilityMaxBodyReadSize))
-
-	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
-		return nil, unauthorizedObservabilityError(
-			fmt.Sprintf("codex usage operation unauthorized: status %d %s", response.StatusCode, strings.TrimSpace(string(bodyBytes))),
-		)
-	}
-	if response.StatusCode == http.StatusTooManyRequests {
-		if values, ok := codexUsageLimitGaugeValues("", nil, time.Now().UTC(), bodyBytes); ok {
-			return &ObservabilityCollectResult{GaugeRows: gaugeRows(values)}, nil
+		// Special handling for 429: may indicate usage_limit_reached with valid gauge data.
+		if result != nil && result.StatusCode == http.StatusTooManyRequests {
+			if values, ok := codexUsageLimitGaugeValues("", nil, time.Now().UTC(), result.Body); ok {
+				return &ObservabilityCollectResult{GaugeRows: gaugeRows(values)}, nil
+			}
+			return nil, fmt.Errorf("providerobservability: codex usage operation 429 is not usage_limit_reached")
 		}
-		return nil, fmt.Errorf("providerobservability: codex usage operation 429 is not usage_limit_reached")
-	}
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("providerobservability: codex usage operation failed with status %d: %s", response.StatusCode, strings.TrimSpace(string(bodyBytes)))
+		return nil, err
 	}
 
 	parsed := codexUsageResponse{}
-	if err := json.Unmarshal(bodyBytes, &parsed); err != nil {
+	if err := json.Unmarshal(result.Body, &parsed); err != nil {
 		return nil, fmt.Errorf("providerobservability: decode codex usage operation response: %w", err)
 	}
 	values, _ := codexUsageLimitGaugeValues(parsed.PlanType, parsed.RateLimit, time.Now().UTC(), nil)

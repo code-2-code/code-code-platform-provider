@@ -9,7 +9,7 @@ import (
 )
 
 func TestProviderHostTelemetryTargetGroupsDeduplicatesByHost(t *testing.T) {
-	items := []*managementv1.ProviderSurfaceBindingView{
+	items := []*managementv1.ProviderView{
 		apiSurface("https://API.OpenAI.com/v1/chat/completions?ignored=true"),
 		apiSurface("https://api.openai.com/v1/models"),
 		apiSurface("https://api.openai.com:443/other"),
@@ -28,7 +28,7 @@ func TestProviderHostTelemetryTargetGroupsDeduplicatesByHost(t *testing.T) {
 }
 
 func TestProviderHostTelemetryTargetGroupsSkipsNonAPIAndInvalidURLs(t *testing.T) {
-	items := []*managementv1.ProviderSurfaceBindingView{
+	items := []*managementv1.ProviderView{
 		apiSurface(""),
 		apiSurface("mailto:ops@example.com"),
 		{
@@ -76,8 +76,8 @@ func TestLimitProviderHostTelemetryTargetGroupsAllowsUnlimited(t *testing.T) {
 	}
 }
 
-func apiSurface(baseURL string) *managementv1.ProviderSurfaceBindingView {
-	return &managementv1.ProviderSurfaceBindingView{
+func apiSurface(baseURL string) *managementv1.ProviderView {
+	return &managementv1.ProviderView{
 		Runtime: &providerv1.ProviderSurfaceRuntime{
 			Access: &providerv1.ProviderSurfaceRuntime_Api{Api: &providerv1.ProviderAPISurfaceRuntime{
 				Protocol: apiprotocolv1.Protocol_PROTOCOL_OPENAI_COMPATIBLE,

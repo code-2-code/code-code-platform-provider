@@ -6,9 +6,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-
-	credentialv1 "code-code.internal/go-contract/credential/v1"
-	observabilityv1 "code-code.internal/go-contract/observability/v1"
 )
 
 func TestParseCerebrasOrganizations(t *testing.T) {
@@ -195,7 +192,7 @@ func TestCerebrasParseInt64(t *testing.T) {
 	}
 }
 
-func TestCerebrasCollectorRefreshesSessionTokenAcrossRequests(t *testing.T) {
+func TestCerebrasCollectorOmitsDirectCredentialHeaders(t *testing.T) {
 	collector := NewCerebrasObservabilityCollector()
 	client := &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -207,21 +204,21 @@ func TestCerebrasCollectorRefreshesSessionTokenAcrossRequests(t *testing.T) {
 			cookie := req.Header.Get("Cookie")
 			switch {
 			case strings.Contains(body, "ListMyOrganizations"):
-				if got, want := cookie, "authjs.session-token=token-1"; got != want {
-					t.Fatalf("organization cookie = %q, want %q", got, want)
+				if got := cookie; got != "" {
+					t.Fatalf("organization cookie = %q, want empty before egress auth injection", got)
 				}
 				return newRoundTripResponse(http.StatusOK, `{"data":{"ListMyOrganizations":[{"id":"org-1","name":"Personal","state":"active"},{"id":"org-2","name":"Team","state":"active"}]}}`, "authjs.session-token=token-2; Path=/"), nil
 			case strings.Contains(body, "ListOrganizationEffectiveQuotas"):
-				if got, want := cookie, "authjs.session-token=token-1"; got != want {
-					t.Fatalf("quota cookie = %q, want %q", got, want)
+				if got := cookie; got != "" {
+					t.Fatalf("quota cookie = %q, want empty before egress auth injection", got)
 				}
 				if strings.Contains(body, `"organizationId":"org-1"`) {
 					return newRoundTripResponse(http.StatusOK, `{"data":{"ListOrganizationEffectiveQuotas":[{"modelId":"llama","regionId":"us-east-1","requestsPerMinute":"30","tokensPerMinute":"60000","requestsPerHour":"-1","tokensPerHour":"-1","requestsPerDay":"900","tokensPerDay":"1000000","totalTokensPerMinute":"120000","totalTokensPerHour":"240000","totalTokensPerDay":"4000000"}]}}`, "authjs.session-token=token-3; Path=/"), nil
 				}
 				return newRoundTripResponse(http.StatusOK, `{"data":{"ListOrganizationEffectiveQuotas":[{"modelId":"llama","regionId":"us-west-1","requestsPerMinute":"10","tokensPerMinute":"20000","requestsPerHour":"-1","tokensPerHour":"-1","requestsPerDay":"300","tokensPerDay":"500000","totalTokensPerMinute":"40000","totalTokensPerHour":"80000","totalTokensPerDay":"1000000"}]}}`, ""), nil
 			case strings.Contains(body, "ListOrganizationUsage"):
-				if got, want := cookie, "authjs.session-token=token-1"; got != want {
-					t.Fatalf("usage cookie = %q, want %q", got, want)
+				if got := cookie; got != "" {
+					t.Fatalf("usage cookie = %q, want empty before egress auth injection", got)
 				}
 				if strings.Contains(body, `"organizationId":"org-1"`) {
 					return newRoundTripResponse(http.StatusOK, `{"data":{"ListOrganizationUsage":[{"modelId":"llama","regionId":"us-east-1","rpm":"5","tpm":"12000","rph":"0","tph":"0","rpd":"150","tpd":"300000"}]}}`, ""), nil
@@ -235,12 +232,6 @@ func TestCerebrasCollectorRefreshesSessionTokenAcrossRequests(t *testing.T) {
 	}
 
 	result, err := collector.Collect(context.Background(), ObservabilityCollectInput{
-		ObservabilityCredential: testCerebrasSessionCredential("token-1"),
-		CredentialBackfills: []CredentialBackfillRule{{
-			RuleID:     "authjs-session-token",
-			Source:     observabilityv1.CredentialBackfillSource_CREDENTIAL_BACKFILL_SOURCE_HTTP_RESPONSE_COOKIE,
-			SourceName: "authjs.session-token",
-		}},
 		HTTPClient: client,
 	})
 	if err != nil {
@@ -248,9 +239,6 @@ func TestCerebrasCollectorRefreshesSessionTokenAcrossRequests(t *testing.T) {
 	}
 	if len(result.GaugeRows) != 32 {
 		t.Fatalf("len(GaugeRows) = %d, want %d", len(result.GaugeRows), 32)
-	}
-	if got, want := result.CredentialBackfillValues["authjs.session-token"], "token-3"; got != want {
-		t.Fatalf("backfilled authjs.session-token = %q, want %q", got, want)
 	}
 }
 
@@ -263,8 +251,7 @@ func TestCerebrasCollectorReportsInvalidOrExpiredSessionToken(t *testing.T) {
 	}
 
 	_, err := collector.Collect(context.Background(), ObservabilityCollectInput{
-		ObservabilityCredential: testCerebrasSessionCredential("token-1"),
-		HTTPClient:              client,
+		HTTPClient: client,
 	})
 	if err == nil {
 		t.Fatal("Collect() error = nil, want unauthorized error")
@@ -303,8 +290,7 @@ func TestCerebrasCollectorSkipsOrganizationsWhoseQuotaQueryFails(t *testing.T) {
 	}
 
 	result, err := collector.Collect(context.Background(), ObservabilityCollectInput{
-		ObservabilityCredential: testCerebrasSessionCredential("token-1"),
-		HTTPClient:              client,
+		HTTPClient: client,
 	})
 	if err != nil {
 		t.Fatalf("Collect() error = %v", err)
@@ -341,8 +327,7 @@ func TestCerebrasCollectorFailsWhenEveryOrganizationQuotaQueryFails(t *testing.T
 	}
 
 	_, err := collector.Collect(context.Background(), ObservabilityCollectInput{
-		ObservabilityCredential: testCerebrasSessionCredential("token-1"),
-		HTTPClient:              client,
+		HTTPClient: client,
 	})
 	if err == nil {
 		t.Fatal("Collect() error = nil, want error")
@@ -387,19 +372,5 @@ func newRoundTripResponse(status int, body string, setCookie string) *http.Respo
 		StatusCode: status,
 		Header:     header,
 		Body:       io.NopCloser(strings.NewReader(body)),
-	}
-}
-
-func testCerebrasSessionCredential(token string) *credentialv1.ResolvedCredential {
-	return &credentialv1.ResolvedCredential{
-		Kind: credentialv1.CredentialKind_CREDENTIAL_KIND_SESSION,
-		Material: &credentialv1.ResolvedCredential_Session{
-			Session: &credentialv1.SessionCredential{
-				SchemaId: "cerebras-session",
-				Values: map[string]string{
-					"authjs_session_token": token,
-				},
-			},
-		},
 	}
 }

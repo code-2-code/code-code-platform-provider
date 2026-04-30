@@ -3,14 +3,11 @@ package providerobservability
 import (
 	"context"
 	"fmt"
-	"maps"
 	"regexp"
-	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	platformtelemetry "code-code.internal/platform-k8s/internal/platform/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
@@ -19,14 +16,14 @@ import (
 // observabilityMetrics holds OTel instruments for one observability runner family.
 // The ownerLabel differentiates "cli_id" (OAuth) from "vendor_id" (vendor API-key).
 type observabilityMetrics struct {
-	ownerLabel     string // "cli_id" or "vendor_id"
-	meter          otelmetric.Meter
-	probeRuns      otelmetric.Int64Counter
-	probeLastRun   otelmetric.Float64Gauge
-	probeLastOutcome otelmetric.Float64Gauge
-	probeLastReason  otelmetric.Float64Gauge
-	probeNextAllowed otelmetric.Float64Gauge
-	authUsable       otelmetric.Float64Gauge
+	ownerLabel         string // "cli_id" or "vendor_id"
+	meter              otelmetric.Meter
+	probeRuns          otelmetric.Int64Counter
+	probeLastRun       otelmetric.Float64Gauge
+	probeLastOutcome   otelmetric.Float64Gauge
+	probeLastReason    otelmetric.Float64Gauge
+	probeNextAllowed   otelmetric.Float64Gauge
+	authUsable         otelmetric.Float64Gauge
 	credentialLastUsed otelmetric.Float64Gauge
 
 	lastReasonMu sync.Mutex
@@ -173,6 +170,25 @@ func (m *observabilityMetrics) record(
 	}
 }
 
+func (m *observabilityMetrics) recordThrottle(
+	ownerID string,
+	providerID string,
+	trigger Trigger,
+) {
+	if m == nil {
+		return
+	}
+	if ownerID == "" || providerID == "" {
+		return
+	}
+	m.probeRuns.Add(context.Background(), 1, otelmetric.WithAttributes(
+		attribute.String(m.ownerLabel, ownerID),
+		attribute.String("provider_id", providerID),
+		attribute.String("trigger", string(trigger)),
+		attribute.String("outcome", string(ProbeOutcomeThrottled)),
+	))
+}
+
 func (m *observabilityMetrics) recordLastReason(
 	ownerID string,
 	providerID string,
@@ -187,6 +203,16 @@ func (m *observabilityMetrics) recordLastReason(
 	shouldSet := (outcome == ProbeOutcomeAuthBlocked || outcome == ProbeOutcomeFailed) && reason != ""
 	ctx := context.Background()
 	m.lastReasonMu.Lock()
+	for _, staleReason := range observabilityLastReasonResetCandidates() {
+		if staleReason == reason {
+			continue
+		}
+		m.probeLastReason.Record(ctx, 0, otelmetric.WithAttributes(
+			attribute.String(m.ownerLabel, ownerID),
+			attribute.String("provider_id", providerID),
+			attribute.String("reason", staleReason),
+		))
+	}
 	previous := m.lastReasons[key]
 	if previous != "" && (!shouldSet || previous != reason) {
 		m.probeLastReason.Record(ctx, 0, otelmetric.WithAttributes(
@@ -205,6 +231,10 @@ func (m *observabilityMetrics) recordLastReason(
 		m.lastReasons[key] = reason
 	}
 	m.lastReasonMu.Unlock()
+}
+
+func observabilityLastReasonResetCandidates() []string {
+	return observabilityProbeReasonLabels()
 }
 
 func probeOutcomeValue(outcome ProbeOutcome) float64 {
@@ -233,106 +263,4 @@ func authUsableValue(outcome ProbeOutcome) (float64, bool) {
 	default:
 		return 0, false
 	}
-}
-
-func (m *observabilityMetrics) recordCollectorValues(ownerID, providerID string, rows []ObservabilityMetricRow) {
-	if m == nil || strings.TrimSpace(ownerID) == "" || strings.TrimSpace(providerID) == "" || len(rows) == 0 {
-		return
-	}
-	for _, row := range rows {
-		metricName := strings.TrimSpace(row.MetricName)
-		if metricName == "" {
-			continue
-		}
-		gauge, err := m.ensureCollectedGauge(metricName)
-		if err != nil || gauge.gauge == nil {
-			continue
-		}
-		labels := m.collectorLabels(ownerID, providerID, row.Labels)
-		gauge.gauge.Record(context.Background(), row.Value, otelmetric.WithAttributes(credentialsAttributes(labels)...))
-	}
-}
-
-
-func (m *observabilityMetrics) ensureCollectedGauge(metricName string) (collectedGauge, error) {
-	if m == nil {
-		return collectedGauge{}, nil
-	}
-	metricName = strings.TrimSpace(metricName)
-	if !observabilityMetricNamePattern.MatchString(metricName) {
-		return collectedGauge{}, fmt.Errorf("providerobservability: invalid collector metric name %q", metricName)
-	}
-	m.collectedMu.Lock()
-	defer m.collectedMu.Unlock()
-	if existing, ok := m.collectedGauges[metricName]; ok {
-		return existing, nil
-	}
-	gauge, err := newCredentialsGauge(m.meter, metricName, "Active operation collected gauge value.")
-	if err != nil {
-		return collectedGauge{}, err
-	}
-	collected := collectedGauge{gauge: gauge}
-	m.collectedGauges[metricName] = collected
-	return collected, nil
-}
-
-func (m *observabilityMetrics) collectorLabels(ownerID string, providerID string, rowLabels map[string]string) map[string]string {
-	labels := map[string]string{
-		ownerKindLabel:  m.ownerKindValue(),
-		ownerIDLabel:    ownerID,
-		m.ownerLabel:    ownerID,
-		"provider_id":   providerID,
-	}
-	for key, value := range m.sanitizeCollectorLabels(rowLabels) {
-		labels[key] = value
-	}
-	return labels
-}
-
-func (m *observabilityMetrics) ownerKindValue() string {
-	switch m.ownerLabel {
-	case "cli_id":
-		return ownerKindCLI
-	default:
-		return ownerKindVendor
-	}
-}
-
-func (m *observabilityMetrics) sanitizeCollectorLabels(labels map[string]string) map[string]string {
-	if len(labels) == 0 {
-		return nil
-	}
-	sanitized := map[string]string{}
-	for key, value := range labels {
-		trimmedKey := platformtelemetry.StorageMetricName(strings.TrimSpace(key))
-		if trimmedKey == "" ||
-			trimmedKey == ownerKindLabel ||
-			trimmedKey == ownerIDLabel ||
-			trimmedKey == m.ownerLabel ||
-			trimmedKey == "provider_id" ||
-			trimmedKey == "provider_surface_binding_id" ||
-			trimmedKey == "instance_id" {
-			continue
-		}
-		if !observabilityLabelNamePattern.MatchString(trimmedKey) {
-			continue
-		}
-		sanitized[trimmedKey] = strings.TrimSpace(value)
-	}
-	if len(sanitized) == 0 {
-		return nil
-	}
-	return sanitized
-}
-
-func credentialsAttributes(labels map[string]string) []attribute.KeyValue {
-	if len(labels) == 0 {
-		return nil
-	}
-	names := slices.Sorted(maps.Keys(labels))
-	attrs := make([]attribute.KeyValue, 0, len(names))
-	for _, name := range names {
-		attrs = append(attrs, attribute.String(name, labels[name]))
-	}
-	return attrs
 }

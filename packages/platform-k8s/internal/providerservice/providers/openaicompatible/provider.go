@@ -33,8 +33,13 @@ func (p *Provider) Surface() *providercontract.ProviderSurface {
 		DisplayName:              "OpenAI Compatible",
 		SupportedCredentialKinds: []credentialv1.CredentialKind{credentialv1.CredentialKind_CREDENTIAL_KIND_API_KEY},
 		Kind:                     providerv1.ProviderSurfaceKind_PROVIDER_SURFACE_KIND_API,
-		Api: &providerv1.ProviderSurfaceAPISpec{
-			SupportedProtocols: []apiprotocolv1.Protocol{apiprotocolv1.Protocol_PROTOCOL_OPENAI_COMPATIBLE},
+		Spec: &providerv1.ProviderSurface_Api{
+			Api: &providerv1.ProviderSurfaceAPISpec{
+				SupportedProtocols: []apiprotocolv1.Protocol{
+					apiprotocolv1.Protocol_PROTOCOL_OPENAI_COMPATIBLE,
+					apiprotocolv1.Protocol_PROTOCOL_OPENAI_RESPONSES,
+				},
+			},
 		},
 		Capabilities: &providerv1.ProviderCapabilities{
 			SupportsModelOverride: false,
@@ -42,12 +47,12 @@ func (p *Provider) Surface() *providercontract.ProviderSurface {
 	}
 }
 
-// NewRuntime creates one runtime bound to the supplied surface.
-func (p *Provider) NewRuntime(surface *providercontract.ProviderSurfaceBinding, credential *credentialcontract.ResolvedCredential) (providercontract.ProviderRuntime, error) {
-	if surface == nil {
-		return nil, fmt.Errorf("platformk8s/openaicompatible: provider surface is nil")
+// NewRuntime creates one runtime bound to the supplied provider.
+func (p *Provider) NewRuntime(provider *providerv1.Provider, credential *credentialcontract.ResolvedCredential) (providercontract.ProviderRuntime, error) {
+	if provider == nil {
+		return nil, fmt.Errorf("platformk8s/openaicompatible: provider is nil")
 	}
-	runtime := surface.GetRuntime()
+	runtime := provider.GetRuntime()
 	if runtime == nil {
 		return nil, fmt.Errorf("platformk8s/openaicompatible: provider surface runtime is required")
 	}
@@ -62,7 +67,7 @@ func (p *Provider) NewRuntime(surface *providercontract.ProviderSurfaceBinding, 
 		return nil, fmt.Errorf("platformk8s/openaicompatible: api key credential is required")
 	}
 	return &protocolruntime.BaseRuntime{
-		Surface:    proto.Clone(surface).(*providerv1.ProviderSurfaceBinding),
+		Provider:   proto.Clone(provider).(*providerv1.Provider),
 		Credential: proto.Clone(credential).(*credentialcontract.ResolvedCredential),
 		Now:        time.Now,
 	}, nil

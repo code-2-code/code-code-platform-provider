@@ -50,16 +50,18 @@ func observabilityAuthBlockedReason(message string) string {
 	for _, token := range strings.FieldsFunc(normalized, func(r rune) bool {
 		return !((r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_')
 	}) {
-		if len(token) >= 3 && strings.Contains(token, "_") && token == strings.ToUpper(token) {
-			return token
+		if token == observabilityReasonCredentialsMissing {
+			return observabilityReasonCredentialsMissing
 		}
 	}
 	lower := strings.ToLower(normalized)
 	switch {
+	case strings.Contains(lower, "credential") && strings.Contains(lower, "missing"):
+		return observabilityReasonCredentialsMissing
 	case strings.Contains(lower, "status 401"):
-		return "HTTP_401_UNAUTHORIZED"
+		return observabilityReasonAuthBlocked
 	case strings.Contains(lower, "status 403"):
-		return "HTTP_403_FORBIDDEN"
+		return observabilityReasonAuthBlocked
 	default:
 		return ""
 	}

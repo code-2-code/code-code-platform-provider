@@ -29,17 +29,7 @@ func (c *openrouterObservabilityCollector) Collect(ctx context.Context, input Ob
 		return nil, fmt.Errorf("providerobservability: openrouter quotas: http client is nil")
 	}
 
-	apiKey := strings.TrimSpace(observabilityCredentialToken(input.ObservabilityCredential))
-	if apiKey == "" {
-		apiKey = strings.TrimSpace(input.APIKey)
-	}
-
-	if apiKey == "" {
-		return nil, unauthorizedObservabilityError("openrouter quotas: api key is required; configure provider authentication")
-	}
-
 	client := openrouter.New(
-		openrouter.WithSecurity(apiKey),
 		openrouter.WithClient(input.HTTPClient),
 	)
 

@@ -8,9 +8,7 @@ import (
 	providerservicev1 "code-code.internal/go-contract/platform/provider/v1"
 	providerv1 "code-code.internal/go-contract/provider/v1"
 	providers "code-code.internal/platform-k8s/internal/providerservice/providers"
-	clisupport "code-code.internal/platform-k8s/internal/supportservice/clidefinitions/support"
-	"code-code.internal/platform-k8s/internal/supportservice/providersurfaces"
-	vendorsupport "code-code.internal/platform-k8s/internal/supportservice/vendors/support"
+	"code-code.internal/platform-k8s/internal/platform/providersurfaces"
 )
 
 func TestListProvidersReturnsProviders(t *testing.T) {
@@ -42,15 +40,7 @@ func TestListProviderSurfacesReturnsBuiltins(t *testing.T) {
 
 func newProviderReadTestServer(t *testing.T) *Server {
 	t.Helper()
-	cliSupport, err := clisupport.NewManagementService()
-	if err != nil {
-		t.Fatalf("NewManagementService() error = %v", err)
-	}
-	vendorSupport, err := vendorsupport.NewManagementService()
-	if err != nil {
-		t.Fatalf("NewManagementService(vendors) error = %v", err)
-	}
-	surfaces, err := providersurfaces.NewService(cliSupport, vendorSupport)
+	surfaces, err := providersurfaces.NewService()
 	if err != nil {
 		t.Fatalf("NewService(providersurfaces) error = %v", err)
 	}
@@ -61,7 +51,6 @@ func providerReadTestView() *managementv1.ProviderView {
 	return &managementv1.ProviderView{
 		ProviderId:  "sample-openai-compatible",
 		DisplayName: "Sample OpenAI",
-		VendorId:    "openai",
 	}
 }
 
@@ -87,14 +76,6 @@ func (s providerReadService) Get(context.Context, string) (*managementv1.Provide
 }
 
 func (s providerReadService) Update(context.Context, string, providers.UpdateProviderCommand) (*managementv1.ProviderView, error) {
-	return nil, nil
-}
-
-func (s providerReadService) UpdateAPIKeyAuthentication(context.Context, string, providers.UpdateAPIKeyAuthenticationCommand) (*managementv1.UpdateProviderAuthenticationResponse, error) {
-	return nil, nil
-}
-
-func (s providerReadService) UpdateObservabilityAuthentication(context.Context, string, providers.UpdateObservabilityAuthenticationCommand) (*managementv1.ProviderView, error) {
 	return nil, nil
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"strings"
 
 	modelv1 "code-code.internal/go-contract/model/v1"
@@ -14,9 +13,17 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// ModelIDFilter decides whether a provider model ID should be included in
-// the materialized catalog. Return true to include, false to exclude.
-type ModelIDFilter func(providerModelID string) bool
+// ModelIDFilterInput describes one discovered provider model before it is
+// accepted into the materialized catalog.
+type ModelIDFilterInput struct {
+	VendorID        string
+	SurfaceID       string
+	ProviderModelID string
+}
+
+// ModelIDFilter decides whether a provider model ID should be included in the
+// materialized catalog. Return true to include, false to exclude.
+type ModelIDFilter func(ModelIDFilterInput) bool
 
 // ModelIDProbe discovers available model IDs for a provider surface.
 type ModelIDProbe interface {
@@ -25,11 +32,11 @@ type ModelIDProbe interface {
 
 // ProbeRequest describes what to probe.
 type ProbeRequest struct {
-	ProbeID                  string
-	TargetID                 string
-	BaseURL                  string
-	Protocol                 string
-	ProviderSurfaceBindingID string
+	ProbeID   string
+	TargetID  string
+	BaseURL   string
+	Protocol  string
+	SurfaceID string
 }
 
 // CatalogMaterializer refreshes provider surface catalogs by probing for model IDs.
@@ -49,34 +56,19 @@ func NewCatalogMaterializer(probe ModelIDProbe, logger *slog.Logger, filter Mode
 	return &CatalogMaterializer{probe: probe, modelFilter: filter, logger: logger}
 }
 
-// ExcludeByPattern returns a ModelIDFilter that excludes model IDs matching
-// the given regular expression pattern. This is the common case for filtering
-// out non-text-generation models (image, audio, embedding, etc.).
-func ExcludeByPattern(pattern *regexp.Regexp) ModelIDFilter {
-	if pattern == nil {
-		return nil
-	}
-	return func(providerModelID string) bool {
-		return !pattern.MatchString(providerModelID)
-	}
-}
-
-// MaterializeProvider refreshes catalog entries for all surfaces of a provider.
 func (m *CatalogMaterializer) MaterializeProvider(ctx context.Context, provider *providerv1.Provider) (*providerv1.Provider, error) {
 	if m == nil || m.probe == nil || provider == nil {
 		return provider, nil
 	}
 	next := proto.Clone(provider).(*providerv1.Provider)
-	for _, surface := range next.GetSurfaces() {
-		if err := m.materializeSurface(ctx, surface); err != nil {
-			return nil, fmt.Errorf("platformk8s/providercatalogs: materialize surface %q catalog: %w", surface.GetSurfaceId(), err)
-		}
+	if err := m.materializeProviderInternal(ctx, next); err != nil {
+		return nil, fmt.Errorf("platformk8s/providercatalogs: materialize provider %q catalog: %w", next.GetProviderId(), err)
 	}
 	return next, nil
 }
 
-func (m *CatalogMaterializer) materializeSurface(ctx context.Context, surface *providerv1.ProviderSurfaceBinding) error {
-	request, ok := surfaceProbeRequest(surface)
+func (m *CatalogMaterializer) materializeProviderInternal(ctx context.Context, provider *providerv1.Provider) error {
+	request, ok := providerProbeRequest(provider)
 	if !ok {
 		return nil
 	}
@@ -84,66 +76,81 @@ func (m *CatalogMaterializer) materializeSurface(ctx context.Context, surface *p
 	if err != nil {
 		return err
 	}
-	current := surface.GetRuntime().GetCatalog()
+	current := provider.GetRuntime().GetCatalog()
+	surfaceID := strings.TrimSpace(provider.GetSurfaceId())
+	// VendorID is obsolete due to ProviderSurface decoupling. Pass empty.
+	modelIDs = m.filteredModelIDs(modelIDs, "", surfaceID)
 	if catalogAlreadyCurrent(current, modelIDs) {
 		return nil
 	}
-	vendorID := catalogOwnerVendorID(surface)
-	catalog := m.catalogFromModelIDs(current, modelIDs, vendorID)
-	runtime := proto.Clone(surface.GetRuntime()).(*providerv1.ProviderSurfaceRuntime)
+	catalog := m.catalogFromModelIDs(current, modelIDs, "")
+	runtime := proto.Clone(provider.GetRuntime()).(*providerv1.ProviderSurfaceRuntime)
 	runtime.Catalog = catalog
-	surface.Runtime = runtime
+	provider.Runtime = runtime
 	return nil
 }
 
-func surfaceProbeRequest(surface *providerv1.ProviderSurfaceBinding) (ProbeRequest, bool) {
-	if surface == nil || surface.GetRuntime() == nil {
+func providerProbeRequest(provider *providerv1.Provider) (ProbeRequest, bool) {
+	if provider == nil || provider.GetRuntime() == nil {
 		return ProbeRequest{}, false
 	}
-	runtime := surface.GetRuntime()
+	runtime := provider.GetRuntime()
 	probeID := strings.TrimSpace(runtime.GetModelCatalogProbeId())
 	if probeID == "" {
 		return ProbeRequest{}, false
 	}
-	source := surface.GetSourceRef()
-	targetID := strings.TrimSpace(source.GetSurfaceId())
-	if targetID == "" {
-		return ProbeRequest{}, false
-	}
 	request := ProbeRequest{
-		ProbeID:                  probeID,
-		TargetID:                 targetID,
-		ProviderSurfaceBindingID: strings.TrimSpace(surface.GetSurfaceId()),
+		ProbeID:   probeID,
+		TargetID:  strings.TrimSpace(provider.GetSurfaceId()),
+		SurfaceID: strings.TrimSpace(provider.GetSurfaceId()),
 	}
-	if shouldPassSurfaceBaseURL(surface) {
+	if shouldPassSurfaceBaseURL(provider) {
 		request.BaseURL = strings.TrimSpace(providerv1.RuntimeBaseURL(runtime))
 		request.Protocol = providerv1.RuntimeProtocol(runtime).String()
 	}
 	return request, true
 }
 
-func shouldPassSurfaceBaseURL(surface *providerv1.ProviderSurfaceBinding) bool {
-	if surface == nil {
+func shouldPassSurfaceBaseURL(provider *providerv1.Provider) bool {
+	if provider == nil {
 		return false
 	}
-	runtime := surface.GetRuntime()
+	runtime := provider.GetRuntime()
 	return providerv1.RuntimeKind(runtime) == providerv1.ProviderSurfaceKind_PROVIDER_SURFACE_KIND_API &&
 		strings.TrimSpace(providerv1.RuntimeBaseURL(runtime)) != ""
+}
+
+func (m *CatalogMaterializer) filteredModelIDs(modelIDs []string, vendorID string, surfaceID string) []string {
+	if m.modelFilter == nil {
+		return modelIDs
+	}
+	out := make([]string, 0, len(modelIDs))
+	for _, rawModelID := range modelIDs {
+		providerModelID := strings.TrimSpace(rawModelID)
+		if providerModelID == "" {
+			continue
+		}
+		if !m.modelFilter(ModelIDFilterInput{
+			VendorID:        strings.TrimSpace(vendorID),
+			SurfaceID:       strings.TrimSpace(surfaceID),
+			ProviderModelID: providerModelID,
+		}) {
+			continue
+		}
+		out = append(out, providerModelID)
+	}
+	return out
 }
 
 // catalogFromModelIDs builds a provider model catalog from discovered model IDs.
 // It does inline best-effort binding: if a model ID can be resolved to a canonical
 // ModelRef via identity normalization, it is bound immediately.
-// Model IDs rejected by the configured ModelIDFilter are excluded from the catalog.
 func (m *CatalogMaterializer) catalogFromModelIDs(current *providerv1.ProviderModelCatalog, modelIDs []string, vendorID string) *providerv1.ProviderModelCatalog {
 	existingRefs := existingModelRefs(current)
 	entries := make([]*providerv1.ProviderModelCatalogEntry, 0, len(modelIDs))
 	for _, rawModelID := range modelIDs {
 		providerModelID := strings.TrimSpace(rawModelID)
 		if providerModelID == "" {
-			continue
-		}
-		if m.modelFilter != nil && !m.modelFilter(providerModelID) {
 			continue
 		}
 		modelRef := existingRefs[providerModelID]
@@ -157,7 +164,7 @@ func (m *CatalogMaterializer) catalogFromModelIDs(current *providerv1.ProviderMo
 	}
 	return &providerv1.ProviderModelCatalog{
 		Models:    entries,
-		Source:    providerv1.CatalogSource_CATALOG_SOURCE_MODEL_SERVICE,
+		Source:    providerv1.CatalogSource_CATALOG_SOURCE_PROVIDER_DISCOVERY,
 		UpdatedAt: timestamppb.Now(),
 	}
 }
@@ -185,7 +192,7 @@ func resolveModelRef(vendorID string, providerModelID string) *modelv1.ModelRef 
 }
 
 func catalogAlreadyCurrent(current *providerv1.ProviderModelCatalog, modelIDs []string) bool {
-	if current.GetSource() != providerv1.CatalogSource_CATALOG_SOURCE_MODEL_SERVICE {
+	if current.GetSource() != providerv1.CatalogSource_CATALOG_SOURCE_PROVIDER_DISCOVERY {
 		return false
 	}
 	currentModels := current.GetModels()
@@ -212,9 +219,3 @@ func existingModelRefs(catalog *providerv1.ProviderModelCatalog) map[string]*mod
 	return out
 }
 
-func catalogOwnerVendorID(surface *providerv1.ProviderSurfaceBinding) string {
-	if surface.GetSourceRef().GetKind() != providerv1.ProviderSurfaceSourceKind_PROVIDER_SURFACE_SOURCE_KIND_VENDOR {
-		return ""
-	}
-	return strings.TrimSpace(surface.GetSourceRef().GetId())
-}

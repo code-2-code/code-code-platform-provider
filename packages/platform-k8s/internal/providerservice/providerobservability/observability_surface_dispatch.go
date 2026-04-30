@@ -9,20 +9,17 @@ import (
 	"code-code.internal/platform-k8s/internal/providerservice/providers"
 )
 
-func projectionProviderID(item *providers.SurfaceBindingProjection) string {
+func projectionProviderID(item *providers.ProviderStateProjection) string {
 	if item == nil {
 		return ""
 	}
-	if id := strings.TrimSpace(item.Provider.GetProviderId()); id != "" {
-		return id
-	}
-	return ""
+	return strings.TrimSpace(item.Provider.GetProviderId())
 }
 
-// surfaceFilter decides whether a surface binding is eligible for probing.
-type surfaceFilter func(surface *providerv1.ProviderSurfaceBinding) bool
+// surfaceFilter decides whether a surface is eligible for probing.
+type surfaceFilter func(provider *providerv1.Provider) bool
 
-// findProbeSurface locates the first supported surface for a given provider ID.
+// findProbeSurface locates the supported surface for a given provider ID.
 // Returns (nil, nil) if the provider exists but has no supported surface.
 // Returns a NotFound error if the provider does not exist at all.
 func findProbeSurface(
@@ -31,8 +28,8 @@ func findProbeSurface(
 	providerID string,
 	kind string,
 	filter surfaceFilter,
-) (*providerv1.ProviderSurfaceBinding, error) {
-	items, err := providers.ListSurfaceBindingProjections(ctx, store)
+) (*providerv1.Provider, error) {
+	items, err := providers.ListProviderProjections(ctx, store)
 	if err != nil {
 		return nil, err
 	}
@@ -42,8 +39,8 @@ func findProbeSurface(
 			continue
 		}
 		found = true
-		if filter(item.Surface) {
-			return item.Surface, nil
+		if filter(item.Provider) {
+			return item.Provider, nil
 		}
 	}
 	if !found {
@@ -52,25 +49,25 @@ func findProbeSurface(
 	return nil, nil
 }
 
-// collectDueTargets builds a deduplicated map of provider surfaces matching a
-// filter. Shared by both ProbeAllDue implementations.
+// collectDueTargets builds a deduplicated map of providers matching a filter.
+// Shared by both ProbeAllDue implementations.
 func collectDueTargets(
 	ctx context.Context,
 	store providers.Store,
 	filter surfaceFilter,
-) (map[string]*providerv1.ProviderSurfaceBinding, error) {
-	items, err := providers.ListSurfaceBindingProjections(ctx, store)
+) (map[string]*providerv1.Provider, error) {
+	items, err := providers.ListProviderProjections(ctx, store)
 	if err != nil {
 		return nil, err
 	}
-	targets := map[string]*providerv1.ProviderSurfaceBinding{}
+	targets := map[string]*providerv1.Provider{}
 	for _, item := range items {
 		providerID := projectionProviderID(&item)
 		if providerID == "" || targets[providerID] != nil {
 			continue
 		}
-		if filter(item.Surface) {
-			targets[providerID] = item.Surface
+		if filter(item.Provider) {
+			targets[providerID] = item.Provider
 		}
 	}
 	return targets, nil

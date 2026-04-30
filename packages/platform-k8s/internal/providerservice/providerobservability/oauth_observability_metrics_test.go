@@ -28,7 +28,7 @@ func TestOAuthObservabilityMetricsRecordAuthUsable(t *testing.T) {
 	}
 
 	authBlockedAt := now.Add(time.Minute)
-	metrics.record("gemini", "account-a", TriggerManual, ProbeOutcomeAuthBlocked, "INVALID_TOKEN", authBlockedAt, authBlockedAt.Add(time.Minute))
+	metrics.record("gemini", "account-a", TriggerManual, ProbeOutcomeAuthBlocked, "AUTH_BLOCKED", authBlockedAt, authBlockedAt.Add(time.Minute))
 	if got := observedMetricValue(t, reader, "oauth.auth.usable.test"); got != 0 {
 		t.Fatalf("authUsable after auth_blocked = %v, want 0", got)
 	}
@@ -40,7 +40,7 @@ func TestOAuthObservabilityMetricsRecordAuthUsable(t *testing.T) {
 	}
 
 	failedAt := authBlockedAt.Add(time.Minute)
-	metrics.record("gemini", "account-a", TriggerManual, ProbeOutcomeFailed, "KUBERNETES_API_UNAVAILABLE", failedAt, failedAt.Add(time.Minute))
+	metrics.record("gemini", "account-a", TriggerManual, ProbeOutcomeFailed, "PLATFORM_UNAVAILABLE", failedAt, failedAt.Add(time.Minute))
 	if got := observedMetricValue(t, reader, "oauth.auth.usable.test"); got != 0 {
 		t.Fatalf("authUsable after failed = %v, want previous 0", got)
 	}
@@ -139,12 +139,12 @@ func TestSanitizeCollectorLabelsDropsInstanceLabels(t *testing.T) {
 
 	m := &observabilityMetrics{ownerLabel: "cli_id"}
 	labels := m.sanitizeCollectorLabels(map[string]string{
-		"provider_surface_binding_id": "instance-1",
-		"instance_id":                 "instance-1",
-		"model_id":                    "gemini-2.5-pro",
+		"surface_id":  "instance-1",
+		"instance_id": "instance-1",
+		"model_id":    "gemini-2.5-pro",
 	})
-	if _, ok := labels["provider_surface_binding_id"]; ok {
-		t.Fatal("provider_surface_binding_id should be dropped")
+	if _, ok := labels["surface_id"]; ok {
+		t.Fatal("surface_id should be dropped")
 	}
 	if _, ok := labels["instance_id"]; ok {
 		t.Fatal("instance_id should be dropped")

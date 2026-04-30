@@ -28,7 +28,7 @@ type providerHostTelemetryTarget struct {
 }
 
 func (s *Server) ProviderHostTelemetryTargetGroups(ctx context.Context) ([]prometheusHTTPDiscoveryTargetGroup, error) {
-	items, err := s.providerSurfaceBindings.ListProviderSurfaceBindings(ctx)
+	items, err := s.providers.List(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -54,10 +54,10 @@ func (s *Server) ServeProviderHostTelemetryTargets(w http.ResponseWriter, r *htt
 	}
 }
 
-func providerHostTelemetryTargetGroups(items []*managementv1.ProviderSurfaceBindingView) []prometheusHTTPDiscoveryTargetGroup {
+func providerHostTelemetryTargetGroups(items []*managementv1.ProviderView) []prometheusHTTPDiscoveryTargetGroup {
 	targetsByKey := map[string]providerHostTelemetryTarget{}
 	for _, item := range items {
-		target, ok := providerHostTelemetryTargetFromSurface(item)
+		target, ok := providerHostTelemetryTargetFromProvider(item)
 		if !ok {
 			continue
 		}
@@ -91,7 +91,7 @@ func limitProviderHostTelemetryTargetGroups(items []prometheusHTTPDiscoveryTarge
 	return items[:limit]
 }
 
-func providerHostTelemetryTargetFromSurface(item *managementv1.ProviderSurfaceBindingView) (providerHostTelemetryTarget, bool) {
+func providerHostTelemetryTargetFromProvider(item *managementv1.ProviderView) (providerHostTelemetryTarget, bool) {
 	if item == nil || item.GetRuntime().GetApi() == nil {
 		return providerHostTelemetryTarget{}, false
 	}

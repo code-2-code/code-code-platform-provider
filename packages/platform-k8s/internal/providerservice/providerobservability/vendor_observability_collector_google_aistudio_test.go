@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	credentialv1 "code-code.internal/go-contract/credential/v1"
 )
 
 func TestDecodeGoogleAIStudioRPCBodySupportsDirectAndBase64(t *testing.T) {
@@ -40,29 +38,6 @@ func TestDecodeGoogleAIStudioRPCBodySupportsDirectAndBase64(t *testing.T) {
 	row, ok = googleAIStudioPayloadRow(rows[0])
 	if !ok || googleAIStudioStringAt(row, 1) != "gen-lang-client-123" {
 		t.Fatalf("decoded base64 row = %#v, want gen-lang-client-123", rows[0])
-	}
-}
-
-func TestGoogleAIStudioAuthorizationHeader(t *testing.T) {
-	header, err := googleAIStudioAuthorizationHeader(
-		"SID=sid; SAPISID=abc123xyz; __Secure-1PAPISID=one; __Secure-3PAPISID=three; HSID=hsid",
-		googleAIStudioDefaultOrigin,
-		time.Unix(1718000000, 0),
-	)
-	if err != nil {
-		t.Fatalf("googleAIStudioAuthorizationHeader() error = %v", err)
-	}
-	fields := strings.Fields(header)
-	if got, want := len(fields), 6; got != want {
-		t.Fatalf("authorization header field count = %d, want %d", got, want)
-	}
-	for index, prefix := range []string{"SAPISIDHASH", "SAPISID1PHASH", "SAPISID3PHASH"} {
-		if got, want := fields[index*2], prefix; got != want {
-			t.Fatalf("authorization header[%d] = %q, want %q", index*2, got, want)
-		}
-		if !strings.HasPrefix(fields[index*2+1], "1718000000_") {
-			t.Fatalf("authorization hash value = %q, want 1718000000_ prefix", fields[index*2+1])
-		}
 	}
 }
 
@@ -182,22 +157,18 @@ func TestParseGoogleAIStudioRateLimitsSupportsGemmaModels(t *testing.T) {
 }
 
 func TestGoogleAIStudioObservabilityCollectorCollect(t *testing.T) {
-	var authHeader string
 	requestBodies := map[string]string{}
 	var metricTimeSeriesBodies []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authHeader = r.Header.Get("Authorization")
-		if got, want := r.Header.Get("X-Goog-Api-Key"), "AIzaSy-test"; got != want {
-			t.Fatalf("X-Goog-Api-Key = %q, want %q", got, want)
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("Authorization = %q, want empty before egress auth injection", got)
 		}
-		requireCookieHeaderContains(
-			t,
-			r.Header.Get("Cookie"),
-			"SAPISID=sapisid-test",
-			"__Secure-1PAPISID=one",
-			"__Secure-3PAPISID=three",
-			"SID=sid-test",
-		)
+		if got := r.Header.Get("Cookie"); got != "" {
+			t.Fatalf("Cookie = %q, want empty before egress auth injection", got)
+		}
+		if got := r.Header.Get("X-Goog-Api-Key"); got != "" {
+			t.Fatalf("X-Goog-Api-Key = %q, want empty before egress auth injection", got)
+		}
 		if got, want := r.Header.Get("Origin"), googleAIStudioDefaultOrigin; got != want {
 			t.Fatalf("Origin = %q, want %q", got, want)
 		}
@@ -312,32 +283,13 @@ func TestGoogleAIStudioObservabilityCollectorCollect(t *testing.T) {
 		now: func() time.Time { return time.Unix(1718000000, 0) },
 	}
 	result, err := collector.Collect(context.Background(), ObservabilityCollectInput{
-		OwnerID:                 "google",
-		ProviderID:               "account-google",
-		ProviderSurfaceBindingID: "instance-google",
-		ObservabilityCredential: &credentialv1.ResolvedCredential{
-			Kind: credentialv1.CredentialKind_CREDENTIAL_KIND_SESSION,
-			Material: &credentialv1.ResolvedCredential_Session{
-				Session: &credentialv1.SessionCredential{
-					SchemaId: "google-ai-studio-session",
-					Values: map[string]string{
-						"cookie":       "SAPISID=sapisid-test; __Secure-1PAPISID=one; __Secure-3PAPISID=three; SID=sid-test",
-						"page_api_key": "AIzaSy-test",
-						"project_id":   "gen-lang-client-123",
-						"origin":       googleAIStudioDefaultOrigin,
-					},
-				},
-			},
-		},
+		SchemaID:    "google",
+		ProviderID: "account-google",
+		SurfaceID:  "instance-google",
 		HTTPClient: server.Client(),
 	})
 	if err != nil {
 		t.Fatalf("Collect() error = %v", err)
-	}
-	if !strings.Contains(authHeader, "SAPISIDHASH 1718000000_") ||
-		!strings.Contains(authHeader, "SAPISID1PHASH 1718000000_") ||
-		!strings.Contains(authHeader, "SAPISID3PHASH 1718000000_") {
-		t.Fatalf("Authorization = %q, want all SAPISID hashes", authHeader)
 	}
 	for path, want := range map[string]string{
 		"/ListCloudProjects":   `[]`,
@@ -437,52 +389,39 @@ func TestGoogleAIStudioObservabilityCollectorCollect(t *testing.T) {
 	}
 }
 
-func requireCookieHeaderContains(t *testing.T, header string, pairs ...string) {
-	t.Helper()
-	for _, pair := range pairs {
-		if !strings.Contains(header, pair) {
-			t.Fatalf("Cookie = %q, want pair %q", header, pair)
-		}
-	}
-}
-
-func TestGoogleAIStudioObservabilityCollectorCollectSkipsProjectLookupForNumericProjectID(t *testing.T) {
-	t.Parallel()
-
-	requestBodies := map[string]string{}
-	var listCloudProjectsCalls int
-	var fetchMetricTimeSeriesCalls int
+func TestGoogleAIStudioObservabilityCollectorCollectOmitsDirectSecretHeaders(t *testing.T) {
+	var requestCount int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("ReadAll(body) error = %v", err)
+		requestCount++
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("Authorization = %q, want empty before egress auth injection", got)
 		}
-		requestBodies[r.URL.Path] = string(body)
+		if got := r.Header.Get("Cookie"); got != "" {
+			t.Fatalf("Cookie = %q, want empty before egress auth injection", got)
+		}
+		if got := r.Header.Get("X-Goog-Api-Key"); got != "" {
+			t.Fatalf("X-Goog-Api-Key = %q, want empty before egress auth injection", got)
+		}
 		switch r.URL.Path {
 		case "/ListCloudProjects":
-			listCloudProjectsCalls++
-			http.Error(w, "ListCloudProjects should not be called", http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode([]any{
+				[]any{
+					[]any{"projects/946397203396", "gen-lang-client-123", "Default Gemini Project", []any{}, 1, 20},
+				},
+			})
 		case "/ListQuotaModels":
 			_ = json.NewEncoder(w).Encode([]any{
 				[]any{
 					[]any{"gemini-2.5-flash", nil, 4, "gemini-2.5", []any{[]any{"models/gemini-2.5-flash", []any{1, 2, 3}, []any{8, 10}}}, "gemini-2.5-flash"},
-					[]any{"gemini-2.5-pro", nil, 4, "gemini-2.5", []any{[]any{"models/gemini-2.5-pro", []any{1, 2, 3}, []any{8, 10}}}, "gemini-2.5-pro"},
 				},
 			})
 		case "/ListModelRateLimits":
 			_ = json.NewEncoder(w).Encode([]any{
 				[]any{
 					[]any{"gemini-2.5-flash", 20, 1, 1, []any{"5"}, 4},
-					[]any{"gemini-2.5-flash", 20, 2, 1, []any{"250000"}, 4},
-					[]any{"gemini-2.5-pro", 20, 1, 1, []any{"0"}, 4},
-					[]any{"gemini-2.5-pro", 20, 2, 1, []any{"0"}, 4},
-					[]any{"gemini-2.5-flash", 30, 1, 1, []any{"1000"}, 4},
-					[]any{"gemini-2.5-pro", 30, 1, 1, []any{"2000"}, 4},
-					[]any{"gemini-2.5-pro", 30, 2, 1, []any{"1000000"}, 4},
 				},
 			})
 		case "/FetchMetricTimeSeries":
-			fetchMetricTimeSeriesCalls++
 			_ = json.NewEncoder(w).Encode([]any{
 				nil,
 				[]any{"1776660051", 0},
@@ -505,64 +444,18 @@ func TestGoogleAIStudioObservabilityCollectorCollectSkipsProjectLookupForNumeric
 		now: func() time.Time { return time.Unix(1718000000, 0) },
 	}
 	result, err := collector.Collect(context.Background(), ObservabilityCollectInput{
-		OwnerID:                 "google",
-		ProviderID:               "account-google",
-		ProviderSurfaceBindingID: "instance-google",
-		ObservabilityCredential: &credentialv1.ResolvedCredential{
-			Kind: credentialv1.CredentialKind_CREDENTIAL_KIND_SESSION,
-			Material: &credentialv1.ResolvedCredential_Session{
-				Session: &credentialv1.SessionCredential{
-					SchemaId: "google-ai-studio-session",
-					Values: map[string]string{
-						"cookie":       "SAPISID=sapisid-test; __Secure-1PAPISID=one; __Secure-3PAPISID=three; SID=sid-test",
-						"page_api_key": "AIzaSy-test",
-						"project_id":   "946397203396",
-						"origin":       googleAIStudioDefaultOrigin,
-					},
-				},
-			},
-		},
+		SchemaID:    "google",
+		ProviderID: "account-google",
+		SurfaceID:  "instance-google",
 		HTTPClient: server.Client(),
 	})
 	if err != nil {
 		t.Fatalf("Collect() error = %v", err)
 	}
-	if got := listCloudProjectsCalls; got != 0 {
-		t.Fatalf("ListCloudProjects call count = %d, want 0", got)
+	if got := requestCount; got == 0 {
+		t.Fatalf("request count = 0")
 	}
-	if got, want := requestBodies["/ListModelRateLimits"], `["projects/946397203396"]`; got != want {
-		t.Fatalf("ListModelRateLimits body = %q, want %q", got, want)
-	}
-	if got, want := fetchMetricTimeSeriesCalls, 2; got != want {
-		t.Fatalf("FetchMetricTimeSeries call count = %d, want %d", got, want)
-	}
-	if got, want := len(result.GaugeRows), 6; got != want {
-		t.Fatalf("metric rows = %d, want %d", got, want)
-	}
-	var foundRPM5 bool
-	var foundRPM1000 bool
-	var foundRPMReset bool
-	for _, row := range result.GaugeRows {
-		if row.MetricName != googleAIStudioQuotaLimitMetric || row.Labels["quota_type"] != "RPM" {
-			if row.MetricName == providerQuotaResetTimestampMetric && row.Labels["quota_type"] == "RPM" {
-				foundRPMReset = true
-			}
-			continue
-		}
-		if row.Value == 5 {
-			foundRPM5 = true
-		}
-		if row.Value == 1000 {
-			foundRPM1000 = true
-		}
-	}
-	if !foundRPM5 {
-		t.Fatalf("expected RPM=5 row for selected tier")
-	}
-	if !foundRPMReset {
-		t.Fatalf("expected RPM reset row for selected tier")
-	}
-	if foundRPM1000 {
-		t.Fatalf("unexpected RPM=1000 row from non-selected tier")
+	if got := len(result.GaugeRows); got == 0 {
+		t.Fatalf("metric rows = 0")
 	}
 }

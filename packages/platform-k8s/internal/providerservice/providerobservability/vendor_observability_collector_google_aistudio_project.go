@@ -20,9 +20,7 @@ func resolveGoogleAIStudioProject(payload []any, projectID string) (googleAIStud
 		return googleAIStudioProject{}, err
 	}
 	target := strings.TrimSpace(projectID)
-	if target == "" {
-		return googleAIStudioProject{}, fmt.Errorf("project_id is empty")
-	}
+	var fallback *googleAIStudioProject
 	for _, item := range rows {
 		row, ok := googleAIStudioPayloadRow(item)
 		if !ok {
@@ -35,9 +33,23 @@ func resolveGoogleAIStudioProject(payload []any, projectID string) (googleAIStud
 		}
 		project.TierCode, _ = googleAIStudioIntAt(row, 5)
 		project.Tier = googleAIStudioTierName(project.TierCode)
+		if target == "" {
+			if fallback != nil {
+				return googleAIStudioProject{}, fmt.Errorf("project_id is required when ListCloudProjects returns multiple projects")
+			}
+			current := project
+			fallback = &current
+			continue
+		}
 		if googleAIStudioProjectMatches(project, target) {
 			return project, nil
 		}
+	}
+	if fallback != nil {
+		return *fallback, nil
+	}
+	if target == "" {
+		return googleAIStudioProject{}, fmt.Errorf("project_id is empty")
 	}
 	return googleAIStudioProject{}, fmt.Errorf("project %q not found in ListCloudProjects", target)
 }

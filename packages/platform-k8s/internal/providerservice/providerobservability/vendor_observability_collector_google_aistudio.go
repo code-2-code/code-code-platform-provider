@@ -3,10 +3,9 @@ package providerobservability
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
-
-	"code-code.internal/platform-k8s/internal/egressauth"
 )
 
 const (
@@ -15,10 +14,13 @@ const (
 	googleAIStudioCollectorID = "google-aistudio-quotas"
 
 	googleAIStudioDefaultOrigin   = "https://aistudio.google.com"
-	googleAIStudioDefaultAuthUser = "0"
+	googleAIStudioRequestAuthUser = "0"
+
+	googleAIStudioRPCHost       = "alkalimakersuite-pa.clients6.google.com"
+	googleAIStudioRPCPathPrefix = "/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService"
 )
 
-var googleAIStudioRPCBaseURL = "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService"
+var googleAIStudioRPCBaseURL = "https://" + googleAIStudioRPCHost + googleAIStudioRPCPathPrefix
 
 func init() {
 	registerVendorCollectorFactory(googleAIStudioCollectorID, NewGoogleAIStudioObservabilityCollector)
@@ -36,90 +38,36 @@ func (c *googleAIStudioObservabilityCollector) CollectorID() string {
 	return googleAIStudioCollectorID
 }
 
-func (c *googleAIStudioObservabilityCollector) AuthAdapterID() string {
-	return egressauth.AuthAdapterGoogleAIStudioSessionID
-}
-
 func (c *googleAIStudioObservabilityCollector) Collect(ctx context.Context, input ObservabilityCollectInput) (result *ObservabilityCollectResult, err error) {
-	ctx, span := startVendorObservabilityCollectSpan(ctx, c.CollectorID())
+	ctx, span := startSurfaceObservabilityCollectSpan(ctx, c.CollectorID())
 	defer func() {
-		finishVendorObservabilityCollectSpan(span, err)
+		finishSurfaceObservabilityCollectSpan(span, err)
 		span.End()
 	}()
 	if input.HTTPClient == nil {
 		return nil, fmt.Errorf("providerobservability: google ai studio quotas: http client is nil")
 	}
-	session := input.ObservabilityCredential
-	cookieHeader := observabilitySessionValue(session, "cookie")
-	pageAPIKey := observabilitySessionValue(session, "page_api_key", "pageApiKey")
-	projectID := observabilitySessionValue(session, "project_id", "projectId")
-	requestAuthorization := googleAIStudioRequestAuthorizationHeader(observabilitySessionValue(session, "authorization"))
-	authUser := observabilitySessionValue(session, "authuser", "auth_user", "x_goog_authuser")
-	if authUser == "" {
-		authUser = googleAIStudioDefaultAuthUser
-	}
-	recordVendorObservabilityCredentialPresence(span, "request_cookie", cookieHeader != "")
-	recordVendorObservabilityCredentialPresence(span, "page_api_key", pageAPIKey != "")
-	recordVendorObservabilityCredentialPresence(span, "project_id", projectID != "")
-	recordVendorObservabilityCredentialPresence(span, "request_authorization", requestAuthorization != "")
-	origin := observabilitySessionValue(session, "origin")
-	if origin == "" {
-		origin = googleAIStudioDefaultOrigin
-	}
-	if cookieHeader == "" || pageAPIKey == "" || projectID == "" {
-		return nil, unauthorizedObservabilityError("google ai studio quotas: cookie, page_api_key, and project_id are required")
-	}
+	projectID := ""
+	origin := googleAIStudioDefaultOrigin
 	now := c.now().UTC()
-	authHeader := requestAuthorization
-	if authHeader == "" {
-		if strings.Contains(cookieHeader, egressauth.Placeholder) {
-			authHeader = egressauth.Placeholder
-		} else {
-			authHeader, err = googleAIStudioAuthorizationHeader(cookieHeader, origin, now)
-			if err != nil {
-				return nil, unauthorizedObservabilityError(err.Error())
-			}
-		}
-	}
+	baseURL := strings.TrimSpace(googleAIStudioRPCBaseURL)
 
 	var projectPath string
 	tierHint := googleAIStudioTierHint{}
 	if path, ok := normalizeGoogleAIStudioProjectPath(projectID); ok {
 		projectPath = path
 	} else {
-		cloudProjectsBody, callErr := c.call(ctx, input.HTTPClient, googleAIStudioRPCCallInput{
-			Method:        "ListCloudProjects",
-			Authorization: authHeader,
-			AuthUser:      authUser,
-			PageAPIKey:    pageAPIKey,
-			CookieHeader:  cookieHeader,
-			Origin:        origin,
-		})
-		if callErr != nil {
-			return nil, callErr
-		}
-		cloudProjects, decodeErr := decodeGoogleAIStudioRPCBody(cloudProjectsBody)
-		if decodeErr != nil {
-			return nil, fmt.Errorf("providerobservability: google ai studio quotas: decode ListCloudProjects: %w", decodeErr)
-		}
-		project, resolveErr := resolveGoogleAIStudioProject(cloudProjects, projectID)
-		if resolveErr != nil {
-			return nil, fmt.Errorf("providerobservability: google ai studio quotas: resolve project %q: %w", projectID, resolveErr)
-		}
-		projectPath = project.Path
-		tierHint = googleAIStudioTierHint{
-			TierCode: project.TierCode,
+		projectPath, tierHint, err = c.resolveProjectPath(ctx, input.HTTPClient, baseURL, origin, projectID)
+		if err != nil {
+			return nil, err
 		}
 	}
 
 	rateLimitsBody, err := c.call(ctx, input.HTTPClient, googleAIStudioRPCCallInput{
-		Method:        "ListModelRateLimits",
-		Authorization: authHeader,
-		AuthUser:      authUser,
-		PageAPIKey:    pageAPIKey,
-		CookieHeader:  cookieHeader,
-		Origin:        origin,
-		ProjectPath:   projectPath,
+		BaseURL:     baseURL,
+		Method:      "ListModelRateLimits",
+		Origin:      origin,
+		ProjectPath: projectPath,
 	})
 	if err != nil {
 		return nil, err
@@ -130,12 +78,9 @@ func (c *googleAIStudioObservabilityCollector) Collect(ctx context.Context, inpu
 	}
 
 	quotaModelsBody, err := c.call(ctx, input.HTTPClient, googleAIStudioRPCCallInput{
-		Method:        "ListQuotaModels",
-		Authorization: authHeader,
-		AuthUser:      authUser,
-		PageAPIKey:    pageAPIKey,
-		CookieHeader:  cookieHeader,
-		Origin:        origin,
+		BaseURL: baseURL,
+		Method:  "ListQuotaModels",
+		Origin:  origin,
 	})
 	if err != nil {
 		return nil, err
@@ -153,12 +98,9 @@ func (c *googleAIStudioObservabilityCollector) Collect(ctx context.Context, inpu
 		return nil, fmt.Errorf("providerobservability: google ai studio quotas: parse ListModelRateLimits: %w", err)
 	}
 	metricTimeSeriesInput := googleAIStudioRPCCallInput{
-		Authorization: authHeader,
-		AuthUser:      authUser,
-		PageAPIKey:    pageAPIKey,
-		CookieHeader:  cookieHeader,
-		Origin:        origin,
-		ProjectPath:   projectPath,
+		BaseURL:     baseURL,
+		Origin:      origin,
+		ProjectPath: projectPath,
 	}
 	models, err = c.enrichGoogleAIStudioMetricTimeSeriesRows(ctx, input.HTTPClient, metricTimeSeriesInput, models)
 	if err != nil {
@@ -173,4 +115,30 @@ func (c *googleAIStudioObservabilityCollector) Collect(ctx context.Context, inpu
 	return &ObservabilityCollectResult{
 		GaugeRows: rows,
 	}, nil
+}
+
+func (c *googleAIStudioObservabilityCollector) resolveProjectPath(
+	ctx context.Context,
+	httpClient *http.Client,
+	baseURL string,
+	origin string,
+	projectID string,
+) (string, googleAIStudioTierHint, error) {
+	cloudProjectsBody, callErr := c.call(ctx, httpClient, googleAIStudioRPCCallInput{
+		BaseURL: baseURL,
+		Method:  "ListCloudProjects",
+		Origin:  origin,
+	})
+	if callErr != nil {
+		return "", googleAIStudioTierHint{}, callErr
+	}
+	cloudProjects, decodeErr := decodeGoogleAIStudioRPCBody(cloudProjectsBody)
+	if decodeErr != nil {
+		return "", googleAIStudioTierHint{}, fmt.Errorf("providerobservability: google ai studio quotas: decode ListCloudProjects: %w", decodeErr)
+	}
+	project, resolveErr := resolveGoogleAIStudioProject(cloudProjects, projectID)
+	if resolveErr != nil {
+		return "", googleAIStudioTierHint{}, fmt.Errorf("providerobservability: google ai studio quotas: resolve project %q: %w", projectID, resolveErr)
+	}
+	return project.Path, googleAIStudioTierHint{TierCode: project.TierCode}, nil
 }

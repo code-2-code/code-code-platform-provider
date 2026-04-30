@@ -15,8 +15,8 @@ func TestMinimaxObservabilityCollectorCollectsTextQuota(t *testing.T) {
 		if got, want := r.Method, http.MethodGet; got != want {
 			t.Fatalf("method = %q, want %q", got, want)
 		}
-		if got, want := r.Header.Get("Authorization"), "Bearer test-key"; got != want {
-			t.Fatalf("authorization = %q, want %q", got, want)
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("authorization = %q, want empty before egress auth injection", got)
 		}
 		_, _ = w.Write([]byte(`{
 			"base_resp":{"status_code":0,"status_msg":"ok"},
@@ -36,7 +36,6 @@ func TestMinimaxObservabilityCollectorCollectsTextQuota(t *testing.T) {
 
 	result, err := NewMinimaxObservabilityCollector().Collect(context.Background(), ObservabilityCollectInput{
 		SurfaceBaseURL: "https://api.minimaxi.com/v1",
-		APIKey:         "test-key",
 		HTTPClient:     server.Client(),
 	})
 	if err != nil {
@@ -104,7 +103,6 @@ func TestMinimaxObservabilityCollectorCollectsCurrentTokenPlanShape(t *testing.T
 
 	result, err := NewMinimaxObservabilityCollector().Collect(context.Background(), ObservabilityCollectInput{
 		SurfaceBaseURL: "https://api.minimaxi.com/v1",
-		APIKey:         "test-key",
 		HTTPClient:     server.Client(),
 	})
 	if err != nil {
@@ -147,7 +145,6 @@ func TestMinimaxObservabilityCollectorTreatsBaseRespUnauthorizedAsAuthBlocked(t 
 
 	_, err := NewMinimaxObservabilityCollector().Collect(context.Background(), ObservabilityCollectInput{
 		SurfaceBaseURL: "https://api.minimaxi.com/v1",
-		APIKey:         "test-key",
 		HTTPClient:     server.Client(),
 	})
 	if err == nil {

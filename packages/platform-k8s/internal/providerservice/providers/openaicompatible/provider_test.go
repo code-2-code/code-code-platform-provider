@@ -15,8 +15,10 @@ func TestRuntimeListModelsUsesConfiguredSurfaceCatalog(t *testing.T) {
 
 	provider := NewProvider()
 	runtime, err := provider.NewRuntime(
-		&providerv1.ProviderSurfaceBinding{
-			SurfaceId: "instance-1",
+		&providerv1.Provider{
+			ProviderId:  "provider-1",
+			DisplayName: "Provider 1",
+			SurfaceId:   "instance-1",
 			Runtime: &providerv1.ProviderSurfaceRuntime{
 				DisplayName: "instance-1",
 				Origin:      providerv1.ProviderSurfaceOrigin_PROVIDER_SURFACE_ORIGIN_DERIVED,

@@ -19,8 +19,6 @@ const (
 )
 
 const (
-	ownerKindLabel  = "owner_kind"
-	ownerIDLabel    = "owner_id"
-	ownerKindCLI    = "cli"
-	ownerKindVendor = "vendor"
+	ownerKindLabel = "owner_kind"
+	ownerIDLabel   = "owner_id"
 )

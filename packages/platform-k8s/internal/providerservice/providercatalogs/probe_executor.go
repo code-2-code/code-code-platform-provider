@@ -3,16 +3,30 @@ package providercatalogs
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
 	"code-code.internal/go-contract/domainerror"
+	apiprotocolv1 "code-code.internal/go-contract/api_protocol/v1"
 	modelcatalogdiscoveryv1 "code-code.internal/go-contract/model_catalog_discovery/v1"
-	"code-code.internal/platform-k8s/internal/modelservice/modelcatalogdiscovery"
+	"code-code.internal/platform-k8s/internal/platform/modelcatalogdiscovery"
 	"golang.org/x/sync/singleflight"
 	"google.golang.org/protobuf/encoding/protojson"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// CatalogProbeRequest describes one model catalog probe invocation.
+type CatalogProbeRequest struct {
+	ProbeID        string
+	Protocol       apiprotocolv1.Protocol
+	BaseURL        string
+	Headers        http.Header
+	SurfaceID      string
+	Operation      *modelcatalogdiscoveryv1.ModelCatalogDiscoveryOperation
+	DynamicValues  modelcatalogdiscovery.DynamicValues
+	ConcurrencyKey string
+}
 
 type CatalogProbeExecutor struct {
 	httpClientFactory modelcatalogdiscovery.HTTPClientFactory
@@ -86,13 +100,7 @@ func (e *CatalogProbeExecutor) probe(
 	request CatalogProbeRequest,
 	operation *modelcatalogdiscoveryv1.ModelCatalogDiscoveryOperation,
 ) ([]string, error) {
-	var body []byte
-	var err error
-	if operationUsesCredential(operation, request) {
-		body, err = e.fetchAuthenticated(ctx, request, operation)
-	} else {
-		body, err = e.fetchAnonymous(ctx, request, operation)
-	}
+	body, err := e.fetch(ctx, request, operation)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +114,7 @@ func (e *CatalogProbeExecutor) probe(
 	return modelIDs, nil
 }
 
-func (e *CatalogProbeExecutor) fetchAnonymous(
+func (e *CatalogProbeExecutor) fetch(
 	ctx context.Context,
 	request CatalogProbeRequest,
 	operation *modelcatalogdiscoveryv1.ModelCatalogDiscoveryOperation,
@@ -127,51 +135,8 @@ func (e *CatalogProbeExecutor) fetchAnonymous(
 	return response.Body, nil
 }
 
-func (e *CatalogProbeExecutor) fetchAuthenticated(
-	ctx context.Context,
-	request CatalogProbeRequest,
-	operation *modelcatalogdiscoveryv1.ModelCatalogDiscoveryOperation,
-) ([]byte, error) {
-	providerSurfaceBindingID := strings.TrimSpace(request.ProviderSurfaceBindingID)
-	if providerSurfaceBindingID == "" {
-		return nil, domainerror.NewValidation("platformk8s/providercatalogs: auth-bound model operation requires provider_surface_binding_id")
-	}
-	auth, authHeaders, err := modelcatalogdiscovery.EnvoyAuthContextForOperation(
-		request.Protocol,
-		providerSurfaceBindingID,
-		operation,
-	)
-	if err != nil {
-		return nil, err
-	}
-	headers := request.Headers.Clone()
-	for name, values := range authHeaders {
-		for _, value := range values {
-			headers.Add(name, value)
-		}
-	}
-	service, err := modelcatalogdiscovery.NewService(e.httpClientFactory)
-	if err != nil {
-		return nil, err
-	}
-	response, err := service.Fetch(ctx, modelcatalogdiscovery.Request{
-		BaseURL:       request.BaseURL,
-		Headers:       headers,
-		Operation:     operation,
-		DynamicValues: request.DynamicValues,
-		EnvoyAuth:     auth,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return response.Body, nil
-}
-
-func operationUsesCredential(operation *modelcatalogdiscoveryv1.ModelCatalogDiscoveryOperation, request CatalogProbeRequest) bool {
-	if len(operation.GetSecurity()) > 0 {
-		return true
-	}
-	return strings.TrimSpace(request.ProviderSurfaceBindingID) != ""
+func operationRequiresSecurity(operation *modelcatalogdiscoveryv1.ModelCatalogDiscoveryOperation) bool {
+	return len(operation.GetSecurity()) > 0
 }
 
 func catalogProbeSingleflightKey(
@@ -185,7 +150,7 @@ func catalogProbeSingleflightKey(
 	parts := []string{
 		request.Protocol.String(),
 		strings.TrimSpace(request.BaseURL),
-		strings.TrimSpace(request.ProviderSurfaceBindingID),
+		strings.TrimSpace(request.SurfaceID),
 		string(operationJSON),
 	}
 	return strings.Join(parts, "\x00")

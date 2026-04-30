@@ -145,7 +145,7 @@ func catalogProbeIdentityAttributes(
 	return []attribute.KeyValue{
 		attribute.String("probe_id", catalogProbeID(request)),
 		attribute.String("protocol", catalogProbeProtocol(request)),
-		attribute.String("auth", catalogProbeAuthKind(request, operation)),
+		attribute.String("security", catalogProbeSecurityKind(operation)),
 		attribute.String("response_kind", operation.GetResponseKind().String()),
 	}
 }
@@ -168,14 +168,11 @@ func catalogProbeProtocol(request CatalogProbeRequest) string {
 	return protocol
 }
 
-func catalogProbeAuthKind(
-	request CatalogProbeRequest,
-	operation *modelcatalogdiscoveryv1.ModelCatalogDiscoveryOperation,
-) string {
-	if operationUsesCredential(operation, request) {
-		return "credential"
+func catalogProbeSecurityKind(operation *modelcatalogdiscoveryv1.ModelCatalogDiscoveryOperation) string {
+	if operationRequiresSecurity(operation) {
+		return "declared"
 	}
-	return "anonymous"
+	return "none"
 }
 
 func catalogProbeErrorKind(err error) string {

@@ -98,13 +98,9 @@ func (c *googleAIStudioObservabilityCollector) enrichGoogleAIStudioMetricTimeSer
 	fetchedQuotaTypes := map[string]struct{}{}
 	for _, descriptor := range descriptors {
 		body, err := c.call(ctx, httpClient, googleAIStudioRPCCallInput{
-			Method:        "FetchMetricTimeSeries",
-			Authorization: input.Authorization,
-			AuthUser:      input.AuthUser,
-			PageAPIKey:    input.PageAPIKey,
-			CookieHeader:  input.CookieHeader,
-			Origin:        input.Origin,
-			ProjectPath:   input.ProjectPath,
+			Method:      "FetchMetricTimeSeries",
+			Origin:      input.Origin,
+			ProjectPath: input.ProjectPath,
 			MetricTimeSeries: googleAIStudioMetricTimeSeriesRequest{
 				TierCode:        tierCode,
 				QuotaType:       descriptor.QuotaType,

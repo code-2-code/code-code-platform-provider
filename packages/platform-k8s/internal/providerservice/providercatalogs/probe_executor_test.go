@@ -13,13 +13,13 @@ func TestCatalogProbeLeaseKeyUsesSourceConcurrencyKey(t *testing.T) {
 		ResponseKind: modelcatalogdiscoveryv1.ModelCatalogDiscoveryResponseKind_MODEL_CATALOG_DISCOVERY_RESPONSE_KIND_OPENAI_MODELS,
 	}
 	requestA := CatalogProbeRequest{
-		Protocol:                 apiprotocolv1.Protocol_PROTOCOL_OPENAI_COMPATIBLE,
-		BaseURL:                  "https://api.example.test/v1",
-		ProviderSurfaceBindingID: "surface-a",
-		ConcurrencyKey:           "probe.example",
+		Protocol:       apiprotocolv1.Protocol_PROTOCOL_OPENAI_COMPATIBLE,
+		BaseURL:        "https://api.example.test/v1",
+		SurfaceID:      "surface-a",
+		ConcurrencyKey: "probe.example",
 	}
 	requestB := requestA
-	requestB.ProviderSurfaceBindingID = "surface-b"
+	requestB.SurfaceID = "surface-b"
 
 	keyA := catalogProbeSingleflightKey(requestA, operation)
 	keyB := catalogProbeSingleflightKey(requestB, operation)

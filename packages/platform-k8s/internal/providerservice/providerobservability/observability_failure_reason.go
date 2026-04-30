@@ -6,16 +6,6 @@ import (
 	"time"
 )
 
-const (
-	observabilityReasonKubernetesAPIUnavailable    = "KUBERNETES_API_UNAVAILABLE"
-	observabilityReasonUpstreamConnectionRefused   = "UPSTREAM_CONNECTION_REFUSED"
-	observabilityReasonUpstreamTLSHandshakeTimeout = "UPSTREAM_TLS_HANDSHAKE_TIMEOUT"
-	observabilityReasonUpstreamTimeout             = "UPSTREAM_TIMEOUT"
-	observabilityReasonDNSResolutionFailed         = "DNS_RESOLUTION_FAILED"
-	observabilityReasonUpstreamConnectionReset     = "UPSTREAM_CONNECTION_RESET"
-	observabilityReasonProbeFailed                 = "PROBE_FAILED"
-)
-
 func observabilityFailureReasonFromError(err error) string {
 	if err == nil {
 		return ""
@@ -39,28 +29,28 @@ func observabilityFailureReason(message string) string {
 		"client.timeout exceeded",
 		"i/o timeout",
 	) {
-		return observabilityReasonKubernetesAPIUnavailable
+		return observabilityReasonPlatformUnavailable
 	}
 	switch {
 	case strings.Contains(normalized, "connect: connection refused"):
-		return observabilityReasonUpstreamConnectionRefused
+		return observabilityReasonUpstreamUnreachable
 	case strings.Contains(normalized, "tls handshake timeout"):
-		return observabilityReasonUpstreamTLSHandshakeTimeout
+		return observabilityReasonUpstreamUnreachable
 	case strings.Contains(normalized, "context deadline exceeded") ||
 		strings.Contains(normalized, "client.timeout exceeded") ||
 		strings.Contains(normalized, "i/o timeout"):
 		return observabilityReasonUpstreamTimeout
 	case strings.Contains(normalized, "no such host"):
-		return observabilityReasonDNSResolutionFailed
+		return observabilityReasonUpstreamUnreachable
 	case strings.Contains(normalized, "connection reset by peer"):
-		return observabilityReasonUpstreamConnectionReset
+		return observabilityReasonUpstreamUnreachable
 	default:
 		return observabilityReasonProbeFailed
 	}
 }
 
 func observabilityTransientPlatformError(err error) bool {
-	return observabilityFailureReasonFromError(err) == observabilityReasonKubernetesAPIUnavailable
+	return observabilityFailureReasonFromError(err) == observabilityReasonPlatformUnavailable
 }
 
 func retryObservabilityTransientPlatform(ctx context.Context, fn func() error) error {

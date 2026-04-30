@@ -3,8 +3,6 @@ package providerobservability
 import (
 	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"strings"
 )
@@ -40,38 +38,19 @@ func (c *minimaxObservabilityCollector) CollectorID() string {
 }
 
 func (c *minimaxObservabilityCollector) Collect(ctx context.Context, input ObservabilityCollectInput) (*ObservabilityCollectResult, error) {
-	apiKey := strings.TrimSpace(input.APIKey)
-	if apiKey == "" {
-		return nil, unauthorizedObservabilityError("minimax api key is empty")
-	}
-	if input.HTTPClient == nil {
-		return nil, fmt.Errorf("providerobservability: minimax vendor observability http client is nil")
-	}
 	remainsURL, err := minimaxRemainsURL(input.SurfaceBaseURL)
 	if err != nil {
 		return nil, err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, remainsURL, nil)
+	result, err := executeHTTPProbe(ctx, httpProbeSpec{
+		CollectorName: "minimax remains",
+		URL:           remainsURL,
+		HTTPClient:    input.HTTPClient,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("providerobservability: create minimax remains request: %w", err)
+		return nil, err
 	}
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Authorization", "Bearer "+apiKey)
-	response, err := input.HTTPClient.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("providerobservability: execute minimax remains request: %w", err)
-	}
-	defer response.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(response.Body, observabilityMaxBodyReadSize))
-	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
-		return nil, unauthorizedObservabilityError(
-			fmt.Sprintf("minimax remains unauthorized: status %d %s", response.StatusCode, strings.TrimSpace(string(body))),
-		)
-	}
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("providerobservability: minimax remains failed with status %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
-	}
-	rows, err := parseMinimaxRemainsGaugeRows(body)
+	rows, err := parseMinimaxRemainsGaugeRows(result.Body)
 	if err != nil {
 		return nil, err
 	}

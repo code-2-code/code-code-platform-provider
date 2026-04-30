@@ -7,13 +7,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"code-code.internal/platform-k8s/internal/supportservice/clidefinitions/codeassist"
+	"code-code.internal/platform-k8s/internal/platform/codeassist"
 )
 
 func TestGeminiObservabilityCollectorCollectQuota(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got, want := r.Header.Get("Authorization"), "Bearer access-token"; got != want {
-			t.Fatalf("authorization = %q, want %q", got, want)
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("authorization = %q, want empty before egress auth injection", got)
 		}
 		switch r.URL.Path {
 		case "/load":
@@ -36,8 +36,7 @@ func TestGeminiObservabilityCollectorCollectQuota(t *testing.T) {
 
 	collector := NewGeminiObservabilityCollector()
 	result, err := collector.Collect(context.Background(), ObservabilityCollectInput{
-		AccessToken: "access-token",
-		HTTPClient:  server.Client(),
+		HTTPClient: server.Client(),
 	})
 	if err != nil {
 		t.Fatalf("Collect() error = %v", err)
@@ -53,12 +52,6 @@ func TestGeminiObservabilityCollectorCollectQuota(t *testing.T) {
 	}
 	if got, want := metricRowValue(result.GaugeRows, geminiFlashLiteRemainingPercentMetric), 25.0; got != want {
 		t.Fatalf("flash-lite percent = %v, want %v", got, want)
-	}
-	if got, want := result.CredentialBackfillValues[materialKeyProjectID], "workspacecli-489315"; got != want {
-		t.Fatalf("secret project_id = %q, want %q", got, want)
-	}
-	if got, want := result.CredentialBackfillValues[materialKeyTierName], "Google AI Pro"; got != want {
-		t.Fatalf("secret tier_name = %q, want %q", got, want)
 	}
 }
 

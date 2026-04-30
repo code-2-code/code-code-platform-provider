@@ -7,14 +7,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"code-code.internal/platform-k8s/internal/supportservice/clidefinitions/codeassist"
+	"code-code.internal/platform-k8s/internal/platform/codeassist"
 )
 
 func TestAntigravityObservabilityCollectorCollectQuota(t *testing.T) {
 	previousFetchURLs := antigravityFetchAvailableModelsURLs
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got, want := r.Header.Get("Authorization"), "Bearer access-token"; got != want {
-			t.Fatalf("authorization = %q, want %q", got, want)
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("authorization = %q, want empty before egress auth injection", got)
 		}
 		switch r.URL.Path {
 		case "/load":
@@ -48,7 +48,6 @@ func TestAntigravityObservabilityCollectorCollectQuota(t *testing.T) {
 
 	collector := NewAntigravityObservabilityCollector()
 	result, err := collector.Collect(context.Background(), ObservabilityCollectInput{
-		AccessToken:           "access-token",
 		HTTPClient:            server.Client(),
 		ModelCatalogUserAgent: "antigravity/1.22.2 darwin/arm64",
 	})
@@ -63,12 +62,6 @@ func TestAntigravityObservabilityCollectorCollectQuota(t *testing.T) {
 	}
 	if got := metricRowValueWithLabels(result.GaugeRows, antigravityQuotaRemainingPercentMetric, "model_id", "internal-model"); got != 0 {
 		t.Fatalf("internal model remaining percent = %v, want 0", got)
-	}
-	if got, want := result.CredentialBackfillValues[materialKeyProjectID], "workspacecli-489315"; got != want {
-		t.Fatalf("secret project_id = %q, want %q", got, want)
-	}
-	if got, want := result.CredentialBackfillValues[materialKeyTierName], "Google AI Pro"; got != want {
-		t.Fatalf("secret tier_name = %q, want %q", got, want)
 	}
 }
 
@@ -93,14 +86,13 @@ func TestAntigravityObservabilityCollectorNormalizesGenericTierName(t *testing.T
 	}()
 
 	result, err := NewAntigravityObservabilityCollector().Collect(context.Background(), ObservabilityCollectInput{
-		AccessToken: "access-token",
-		HTTPClient:  server.Client(),
+		HTTPClient: server.Client(),
 	})
 	if err != nil {
 		t.Fatalf("Collect() error = %v", err)
 	}
-	if got, want := result.CredentialBackfillValues[materialKeyTierName], "Free"; got != want {
-		t.Fatalf("secret tier_name = %q, want %q", got, want)
+	if got, want := metricRowValueWithLabels(result.GaugeRows, antigravityQuotaRemainingPercentMetric, "model_id", "gemini-2.5-pro"), 60.0; got != want {
+		t.Fatalf("gemini remaining percent = %v, want %v", got, want)
 	}
 }
 
