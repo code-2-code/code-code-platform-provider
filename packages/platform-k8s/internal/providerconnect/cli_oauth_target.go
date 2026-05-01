@@ -10,25 +10,26 @@ func newCLIReauthorizationTarget(provider *ProviderView) (*connectTarget, error)
 	if provider == nil {
 		return nil, domainerror.NewValidation("platformk8s/providerconnect: provider is nil")
 	}
-	runtime := provider.GetRuntime()
-	if runtime == nil || runtime.GetCli() == nil {
-		return nil, domainerror.NewValidation("platformk8s/providerconnect: provider %q is not backed by CLI OAuth", provider.GetProviderId())
-	}
 	if strings.TrimSpace(provider.GetProviderCredentialId()) == "" {
 		return nil, domainerror.NewValidation("platformk8s/providerconnect: provider %q credential is missing", provider.GetProviderId())
 	}
-	cliID := strings.TrimSpace(runtime.GetCli().GetCliId())
+	cliID := ""
+	for _, endpoint := range provider.GetEndpoints() {
+		if endpoint.GetCli() != nil {
+			cliID = strings.TrimSpace(endpoint.GetCli().GetCliId())
+			break
+		}
+	}
 	if cliID == "" {
 		return nil, domainerror.NewValidation("platformk8s/providerconnect: provider %q cli_id is missing", provider.GetProviderId())
 	}
 	return newConnectTargetWithIDs(
 		AddMethodCLIOAuth,
 		provider.GetDisplayName(),
-		"", // VendorID is removed from ProviderView
 		cliID,
 		provider.GetSurfaceId(),
 		provider.GetProviderCredentialId(),
 		provider.GetProviderId(),
-		runtime,
+		provider.GetModels(),
 	), nil
 }

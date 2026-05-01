@@ -20,7 +20,6 @@ func (r providerConnectRuntime) oauthFinalizeRuntime() providerConnectOAuthFinal
 	return newProviderConnectOAuthFinalizeRuntime(
 		r.resources,
 		r.queries,
-		r.postConnect,
 		r.logger,
 	)
 }

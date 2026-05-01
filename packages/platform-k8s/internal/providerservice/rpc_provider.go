@@ -24,27 +24,65 @@ func (s *Server) DeleteProvider(ctx context.Context, request *providerservicev1.
 	return &providerservicev1.DeleteProviderResponse{Status: actionStatusOK}, nil
 }
 
+func (s *Server) ApplyProviderModelCatalog(ctx context.Context, request *providerservicev1.ApplyProviderModelCatalogRequest) (*providerservicev1.ApplyProviderModelCatalogResponse, error) {
+	provider, err := s.providers.ApplyModelCatalog(ctx, request.GetProviderId(), request.GetModels())
+	if err != nil {
+		return nil, grpcError(err)
+	}
+	return &providerservicev1.ApplyProviderModelCatalogResponse{Provider: providerViewToService(provider)}, nil
+}
+
+func (s *Server) ApplyProviderProbeStatus(ctx context.Context, request *providerservicev1.ApplyProviderProbeStatusRequest) (*providerservicev1.ApplyProviderProbeStatusResponse, error) {
+	provider, err := s.providers.ApplyProbeStatus(ctx, request.GetProviderId(), request.GetProbeKind(), request.GetState())
+	if err != nil {
+		return nil, grpcError(err)
+	}
+	return &providerservicev1.ApplyProviderProbeStatusResponse{Provider: providerViewToService(provider)}, nil
+}
+
 func (s *Server) ProbeProviderObservability(ctx context.Context, request *providerservicev1.ProbeProviderObservabilityRequest) (*providerservicev1.ProbeProviderObservabilityResponse, error) {
-	providerIDs := normalizedProviderIDs(request.GetProviderIds())
-	if len(providerIDs) == 0 && request.GetProviderId() != "" {
-		providerIDs = []string{request.GetProviderId()}
+	providerIDs, err := s.providerProbeIDs(ctx, request.GetProviderId(), request.GetProviderIds())
+	if err != nil {
+		return nil, grpcError(err)
 	}
 	if len(providerIDs) == 0 {
-		ids, err := s.providerIDs(ctx)
-		if err != nil {
-			return nil, grpcError(err)
-		}
-		if len(ids) == 0 {
-			return &providerservicev1.ProbeProviderObservabilityResponse{Message: "no providers to probe"}, nil
-		}
-		providerIDs = ids
+		return &providerservicev1.ProbeProviderObservabilityResponse{Message: "no providers to probe"}, nil
 	}
-	if err := s.runProviderObservabilityProbe(ctx, providerIDs, providerObservabilityProbeTriggerFromTransport(request.GetTrigger())); err != nil {
+	results, err := s.runProviderObservabilityProbe(ctx, providerIDs, providerObservabilityProbeTriggerFromTransport(request.GetTrigger()))
+	if err != nil {
 		return nil, grpcError(err)
 	}
 	response := &providerservicev1.ProbeProviderObservabilityResponse{
 		ProviderIds: providerIDs,
 		Message:     "provider observability probe completed",
+	}
+	if len(providerIDs) == 1 {
+		response.ProviderId = providerIDs[0]
+	}
+	if len(results) == 1 && results[0] != nil {
+		response.ProviderId = results[0].GetProviderId()
+		response.Outcome = results[0].GetOutcome()
+		response.Message = results[0].GetMessage()
+		response.NextAllowedAt = results[0].GetNextAllowedAt()
+		response.LastAttemptAt = results[0].GetLastAttemptAt()
+	}
+	return response, nil
+}
+
+func (s *Server) ProbeProviderModelCatalog(ctx context.Context, request *providerservicev1.ProbeProviderModelCatalogRequest) (*providerservicev1.ProbeProviderModelCatalogResponse, error) {
+	providerIDs, err := s.providerProbeIDs(ctx, request.GetProviderId(), request.GetProviderIds())
+	if err != nil {
+		return nil, grpcError(err)
+	}
+	if len(providerIDs) == 0 {
+		return &providerservicev1.ProbeProviderModelCatalogResponse{Message: "no providers to probe"}, nil
+	}
+	if err := s.runProviderCatalogDiscovery(ctx, providerIDs); err != nil {
+		return nil, grpcError(err)
+	}
+	response := &providerservicev1.ProbeProviderModelCatalogResponse{
+		ProviderIds: providerIDs,
+		Message:     "provider model catalog probe completed",
 	}
 	if len(providerIDs) == 1 {
 		response.ProviderId = providerIDs[0]
@@ -85,6 +123,17 @@ func normalizedProviderIDs(values []string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+func (s *Server) providerProbeIDs(ctx context.Context, providerID string, providerIDs []string) ([]string, error) {
+	ids := normalizedProviderIDs(providerIDs)
+	if len(ids) == 0 && strings.TrimSpace(providerID) != "" {
+		ids = []string{strings.TrimSpace(providerID)}
+	}
+	if len(ids) > 0 {
+		return ids, nil
+	}
+	return s.providerIDs(ctx)
 }
 
 func (s *Server) providerIDs(ctx context.Context) ([]string, error) {

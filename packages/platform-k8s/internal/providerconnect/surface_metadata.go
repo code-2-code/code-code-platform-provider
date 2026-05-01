@@ -3,30 +3,27 @@ package providerconnect
 import (
 	"strings"
 
-	apiprotocolv1 "code-code.internal/go-contract/api_protocol/v1"
 	credentialv1 "code-code.internal/go-contract/credential/v1"
 	"code-code.internal/go-contract/domainerror"
+	supportv1 "code-code.internal/go-contract/platform/support/v1"
 	providerv1 "code-code.internal/go-contract/provider/v1"
+	"code-code.internal/platform-k8s/internal/platform/providersurfaces"
 	"google.golang.org/protobuf/proto"
 )
 
 type connectSurfaceMetadata struct {
-	value *providerv1.ProviderSurface
+	value *supportv1.Surface
 }
 
-func newConnectSurfaceMetadata(value *providerv1.ProviderSurface) (*connectSurfaceMetadata, error) {
+func newConnectSurfaceMetadata(value *supportv1.Surface) (*connectSurfaceMetadata, error) {
 	if value == nil {
 		return nil, domainerror.NewValidation("platformk8s/providerconnect: provider surface is invalid")
 	}
-	if err := providerv1.ValidateProviderSurface(value); err != nil {
-		return nil, domainerror.NewValidation(
-			"platformk8s/providerconnect: invalid provider surface %q: %v",
-			strings.TrimSpace(value.GetSurfaceId()),
-			err,
-		)
+	if strings.TrimSpace(value.GetSurfaceId()) == "" {
+		return nil, domainerror.NewValidation("platformk8s/providerconnect: provider surface id is empty")
 	}
 	return &connectSurfaceMetadata{
-		value: proto.Clone(value).(*providerv1.ProviderSurface),
+		value: proto.Clone(value).(*supportv1.Surface),
 	}, nil
 }
 
@@ -41,63 +38,18 @@ func (m *connectSurfaceMetadata) ValidateCandidate(
 	candidate *connectProviderCandidate,
 	credentialKind credentialv1.CredentialKind,
 ) error {
-	if candidate == nil || candidate.Runtime() == nil {
-		return domainerror.NewValidation("platformk8s/providerconnect: provider runtime is required")
+	_ = credentialKind
+	if candidate == nil || candidate.Endpoint() == nil {
+		return domainerror.NewValidation("platformk8s/providerconnect: provider endpoint is required")
 	}
 	if m == nil || m.value == nil {
 		return domainerror.NewValidation("platformk8s/providerconnect: provider surface %q is invalid", candidate.SurfaceID())
 	}
-	if !surfaceSupportsCredentialKind(m.value.GetSupportedCredentialKinds(), credentialKind) {
-		return domainerror.NewValidation(
-			"platformk8s/providerconnect: provider surface %q does not support credential kind %s",
-			m.SurfaceID(),
-			credentialKind.String(),
-		)
-	}
-	runtime := candidate.Runtime()
-	if api := runtime.GetApi(); api != nil {
-		if m.value.GetKind() != providerv1.ProviderSurfaceKind_PROVIDER_SURFACE_KIND_API {
-			return domainerror.NewValidation("platformk8s/providerconnect: provider surface %q is not an API surface", m.SurfaceID())
-		}
-		if len(m.value.GetApi().GetSupportedProtocols()) > 0 &&
-			!surfaceSupportsProtocol(m.value.GetApi().GetSupportedProtocols(), api.GetProtocol()) {
-			return domainerror.NewValidation(
-				"platformk8s/providerconnect: provider surface %q does not support protocol %s",
-				m.SurfaceID(),
-				api.GetProtocol().String(),
-			)
+	candidateKey := providerv1.EndpointKey(candidate.Endpoint())
+	for _, endpoint := range providersurfaces.Endpoints(m.value) {
+		if providerv1.EndpointKey(endpoint) == candidateKey {
+			return nil
 		}
 	}
-	if runtime.GetCli() != nil && !surfaceSupportsCLIRuntime(m.value.GetKind()) {
-		return domainerror.NewValidation("platformk8s/providerconnect: provider surface %q does not support CLI OAuth runtime", m.SurfaceID())
-	}
-	return nil
-}
-
-func surfaceSupportsCLIRuntime(kind providerv1.ProviderSurfaceKind) bool {
-	switch kind {
-	case providerv1.ProviderSurfaceKind_PROVIDER_SURFACE_KIND_API,
-		providerv1.ProviderSurfaceKind_PROVIDER_SURFACE_KIND_CLI:
-		return true
-	default:
-		return false
-	}
-}
-
-func surfaceSupportsProtocol(values []apiprotocolv1.Protocol, want apiprotocolv1.Protocol) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
-
-func surfaceSupportsCredentialKind(values []credentialv1.CredentialKind, want credentialv1.CredentialKind) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
+	return domainerror.NewValidation("platformk8s/providerconnect: provider endpoint is not supported by surface %q", m.SurfaceID())
 }

@@ -18,9 +18,6 @@ import (
 	platformk8s "code-code.internal/platform-k8s"
 	"code-code.internal/platform-k8s/internal/platform/state"
 	"code-code.internal/platform-k8s/internal/platform/telemetry"
-	"code-code.internal/platform-k8s/internal/platform/temporalruntime"
-	"code-code.internal/platform-k8s/internal/platform/triggerhttp"
-	"code-code.internal/platform-k8s/internal/providerpostconnect"
 	"code-code.internal/platform-k8s/internal/providerservice"
 	"connectrpc.com/connect"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
@@ -38,7 +35,6 @@ func main() {
 	addr := envOrDefault("PLATFORM_PROVIDER_SERVICE_GRPC_ADDR", ":8081")
 	httpAddr := envOrDefault("PLATFORM_PROVIDER_SERVICE_HTTP_ADDR", ":8080")
 	namespace := envOrDefault("PLATFORM_PROVIDER_SERVICE_NAMESPACE", "code-code")
-	internalActionToken := strings.TrimSpace(os.Getenv("PLATFORM_PROVIDER_SERVICE_INTERNAL_ACTION_TOKEN"))
 	databaseURL := firstEnv("PLATFORM_DATABASE_URL", "PLATFORM_PROVIDER_SERVICE_DATABASE_URL")
 
 	telemetryShutdown, err := telemetry.Setup(context.Background(), envOrDefault("OTEL_SERVICE_NAME", "platform-provider-service"))
@@ -60,20 +56,6 @@ func main() {
 	statePool, err := state.OpenPostgres(context.Background(), databaseURL, "platform-provider-service")
 	must(err)
 	defer statePool.Close()
-
-	temporalConfig := temporalruntime.ConfigFromEnv(providerpostconnect.TemporalTaskQueue)
-	temporalClient, err := temporalruntime.Dial(context.Background(), temporalConfig)
-	must(err)
-	defer temporalClient.Close()
-	postConnectRuntime, err := providerpostconnect.NewTemporalWorkflowRuntime(providerpostconnect.TemporalWorkflowRuntimeConfig{
-		Client:                  temporalClient,
-		TaskQueue:               temporalConfig.TaskQueue,
-		PlatformNamespace:       namespace,
-		ProviderHTTPBaseURL:     envOrDefault("PLATFORM_PROVIDER_SERVICE_WORKFLOW_PROVIDER_HTTP_BASE_URL", "http://platform-provider-service.code-code.svc.cluster.local:8080/internal/actions"),
-		ProviderHTTPActionToken: internalActionToken,
-	})
-	must(err)
-
 	server, err := providerservice.NewServer(providerservice.Config{
 		Client:                          kubeClient,
 		Reader:                          kubeClient,
@@ -82,47 +64,6 @@ func main() {
 		ProviderHostTelemetryMaxTargets: envIntOrDefault("PLATFORM_PROVIDER_SERVICE_HOST_TELEMETRY_MAX_TARGETS", 200),
 	})
 	must(err)
-	temporalWorker := temporalruntime.NewWorker(temporalClient, temporalConfig.TaskQueue)
-	must(postConnectRuntime.Register(temporalWorker))
-	must(providerservice.RegisterTemporalWorkflows(temporalWorker, server))
-	must(providerservice.EnsureTemporalSchedules(context.Background(), temporalClient, temporalConfig.TaskQueue))
-	must(temporalWorker.Start())
-	defer temporalWorker.Stop()
-	triggerServer, err := triggerhttp.NewServer(triggerhttp.Config{
-		Logger: slog.Default(),
-		Actions: map[string]triggerhttp.ActionFunc{
-			"discover-provider-catalogs": func(ctx context.Context, request triggerhttp.Request) (any, error) {
-				body, err := decodeProviderTriggerBody(request)
-				if err != nil {
-					return nil, err
-				}
-				if err := server.DiscoverProviderCatalogs(ctx, body.ProviderIDs); err != nil {
-					return nil, err
-				}
-				return map[string]any{"provider_ids": body.ProviderIDs}, nil
-			},
-			"submit-provider-observability-probe": func(ctx context.Context, request triggerhttp.Request) (any, error) {
-				body, err := decodeProviderTriggerBody(request)
-				if err != nil {
-					return nil, err
-				}
-				response, err := server.ProbeProviderObservability(ctx, &providerservicev1.ProbeProviderObservabilityRequest{
-					ProviderIds: body.ProviderIDs,
-					Trigger:     providerTrigger(body.Trigger),
-				})
-				if err != nil {
-					return nil, err
-				}
-				return map[string]any{"provider_ids": response.GetProviderIds(), "message": response.GetMessage()}, nil
-			},
-		},
-		AuthToken: internalActionToken,
-	})
-	must(err)
-	if internalActionToken == "" {
-		slog.Info("internal action endpoints are disabled (env PLATFORM_PROVIDER_SERVICE_INTERNAL_ACTION_TOKEN is empty)")
-	}
-
 	listener, err := net.Listen("tcp", addr)
 	must(err)
 	httpListener, err := net.Listen("tcp", httpAddr)
@@ -131,7 +72,6 @@ func main() {
 	path, providerConnectHandler := providerservicev1connect.NewProviderServiceHandler(providerConnectHTTPAdapter{Server: server})
 	httpMux.Handle(path, providerConnectHandler)
 	httpMux.HandleFunc(providerservice.ProviderHostTelemetryTargetsPath, server.ServeProviderHostTelemetryTargets)
-	httpMux.Handle("/", triggerServer)
 	httpServer := &http.Server{Handler: httpMux}
 	grpcServer := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()))
 	providerservicev1.RegisterProviderServiceServer(grpcServer, server)
@@ -175,49 +115,6 @@ func (a providerConnectHTTPAdapter) WatchProviderStatusEvents(
 	return a.Server.StreamProviderStatusEvents(ctx, request.GetProviderIds(), func(event *providerservicev1.ProviderStatusEvent) error {
 		return stream.Send(&providerservicev1.WatchProviderStatusEventsResponse{Event: event})
 	})
-}
-
-type providerTriggerBody struct {
-	ProviderIDs []string `json:"provider_ids"`
-	ProviderID  string   `json:"provider_id"`
-	Trigger     string   `json:"trigger"`
-}
-
-func decodeProviderTriggerBody(request triggerhttp.Request) (providerTriggerBody, error) {
-	var body providerTriggerBody
-	if err := request.DecodeJSON(&body); err != nil {
-		return providerTriggerBody{}, err
-	}
-	body.ProviderIDs = normalizeProviderIDs(append(body.ProviderIDs, body.ProviderID))
-	return body, nil
-}
-
-func normalizeProviderIDs(values []string) []string {
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
-}
-
-func providerTrigger(trigger string) providerservicev1.ProviderObservabilityProbeTrigger {
-	switch strings.TrimSpace(trigger) {
-	case "connect":
-		return providerservicev1.ProviderObservabilityProbeTrigger_PROVIDER_OBSERVABILITY_PROBE_TRIGGER_CONNECT
-	case "schedule":
-		return providerservicev1.ProviderObservabilityProbeTrigger_PROVIDER_OBSERVABILITY_PROBE_TRIGGER_SCHEDULE
-	default:
-		return providerservicev1.ProviderObservabilityProbeTrigger_PROVIDER_OBSERVABILITY_PROBE_TRIGGER_MANUAL
-	}
 }
 
 func envOrDefault(key, fallback string) string {

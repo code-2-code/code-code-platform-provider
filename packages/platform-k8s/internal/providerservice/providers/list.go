@@ -7,6 +7,7 @@ import (
 
 	"code-code.internal/go-contract/domainerror"
 	managementv1 "code-code.internal/go-contract/platform/management/v1"
+	supportv1 "code-code.internal/go-contract/platform/support/v1"
 	providerv1 "code-code.internal/go-contract/provider/v1"
 )
 
@@ -55,7 +56,7 @@ func (s *Service) providerProjectionFromProvider(ctx context.Context, provider *
 	return providerProjectionFromProvider(provider, s.providerSurfaceForProjection(ctx, provider))
 }
 
-func (s *Service) providerSurfaceForProjection(ctx context.Context, provider *providerv1.Provider) *providerv1.ProviderSurface {
+func (s *Service) providerSurfaceForProjection(ctx context.Context, provider *providerv1.Provider) *supportv1.Surface {
 	if s == nil || s.surfaces == nil || provider == nil {
 		return nil
 	}

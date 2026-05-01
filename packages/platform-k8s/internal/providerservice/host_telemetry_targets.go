@@ -92,10 +92,18 @@ func limitProviderHostTelemetryTargetGroups(items []prometheusHTTPDiscoveryTarge
 }
 
 func providerHostTelemetryTargetFromProvider(item *managementv1.ProviderView) (providerHostTelemetryTarget, bool) {
-	if item == nil || item.GetRuntime().GetApi() == nil {
+	if item == nil {
 		return providerHostTelemetryTarget{}, false
 	}
-	return normalizeProviderHostTelemetryTarget(item.GetRuntime().GetApi().GetBaseUrl())
+	for _, endpoint := range item.GetEndpoints() {
+		if endpoint.GetApi() == nil {
+			continue
+		}
+		if target, ok := normalizeProviderHostTelemetryTarget(endpoint.GetApi().GetBaseUrl()); ok {
+			return target, true
+		}
+	}
+	return providerHostTelemetryTarget{}, false
 }
 
 func normalizeProviderHostTelemetryTarget(raw string) (providerHostTelemetryTarget, bool) {

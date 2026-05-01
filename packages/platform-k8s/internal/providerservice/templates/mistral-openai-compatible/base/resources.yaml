@@ -19,24 +19,12 @@ spec:
     surfaceId: provider-openai-compatible
     providerCredentialRef:
       providerCredentialId: provider-api-key
-    sourceRef:
-      kind: PROVIDER_SURFACE_SOURCE_KIND_VENDOR
-      id: mistral
-      surfaceId: provider-openai-compatible
-    runtime:
-      displayName: Mistral OpenAI Compatible
-      api:
-        protocol: PROTOCOL_OPENAI_COMPATIBLE
-        baseUrl: https://api.example.com/v1
-      origin: PROVIDER_SURFACE_ORIGIN_DERIVED
-      catalog:
-        source: CATALOG_SOURCE_FALLBACK_CONFIG
-        models:
-          - providerModelId: primary-model
-            modelRef:
-              modelId: primary-model
-              vendorId: mistral
-          - providerModelId: secondary-model
-            modelRef:
-              modelId: secondary-model
-              vendorId: mistral
+    models:
+      - providerModelId: primary-model
+        modelRef:
+          modelId: primary-model
+          vendorId: mistral
+      - providerModelId: secondary-model
+        modelRef:
+          modelId: secondary-model
+          vendorId: mistral

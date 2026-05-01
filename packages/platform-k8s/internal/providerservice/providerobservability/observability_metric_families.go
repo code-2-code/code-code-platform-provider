@@ -15,6 +15,7 @@ const (
 	providerRuntimeRateLimitRemainingMetric     = "gen_ai.provider.runtime.rate_limit.remaining"
 	providerUsageRequestsMetric                 = "gen_ai.provider.usage.requests.count"
 	providerUsageTokensMetric                   = "gen_ai.provider.usage.tokens.count"
+	providerUsageCostMetric                     = "gen_ai.provider.usage.cost"
 	providerUsageCostUSDMetric                  = "gen_ai.provider.usage.cost.usd"
 )
 

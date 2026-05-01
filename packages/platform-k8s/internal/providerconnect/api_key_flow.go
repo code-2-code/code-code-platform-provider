@@ -16,7 +16,6 @@ func (r providerConnectRuntime) connectWithAPIKey(ctx context.Context, command *
 	if err != nil {
 		return nil, err
 	}
-	r.postConnect.Dispatch(ctx, result.TargetProviderID)
 	return &ConnectResult{Provider: result.Provider}, nil
 }
 

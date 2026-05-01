@@ -4,30 +4,62 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
-	providerv1 "code-code.internal/go-contract/provider/v1"
-	surfaceregistry "code-code.internal/platform-k8s/internal/platform/providersurfaces/registry"
+	supportv1 "code-code.internal/go-contract/platform/support/v1"
+	"code-code.internal/platform-k8s/internal/platform/providersurfaces/registry"
+	vendorsupport "code-code.internal/platform-k8s/internal/platform/vendors/support"
 )
 
 // Service exposes the effective provider surface read path.
 type Service struct {
-	builtins   map[string]*providerv1.ProviderSurface
+	surfaces map[string]*supportv1.Surface
 }
 
 // NewService creates one provider surface service.
 func NewService() (*Service, error) {
-	builtins := make(map[string]*providerv1.ProviderSurface)
-	for _, item := range surfaceregistry.List() {
-		builtins[item.GetSurfaceId()] = cloneSurface(item)
+	vendors, err := vendorsupport.NewManagementService()
+	if err != nil {
+		return nil, err
 	}
+	items, err := vendors.List(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	surfaces := make(map[string]*supportv1.Surface)
+	for _, vendor := range items {
+		for _, surface := range vendor.GetSurfaces() {
+			surfaceID := strings.TrimSpace(surface.GetSurfaceId())
+			if surfaceID == "" {
+				return nil, fmt.Errorf("platformk8s/providersurfaces: surface id is empty")
+			}
+			if _, exists := surfaces[surfaceID]; exists {
+				return nil, fmt.Errorf("platformk8s/providersurfaces: provider surface %q is already registered", surfaceID)
+			}
+			surfaces[surfaceID] = cloneSurface(surface)
+		}
+	}
+	surfaces[registry.SurfaceIDCustomAPIKey] = customAPIKeySurface()
 	return &Service{
-		builtins:   builtins,
+		surfaces: surfaces,
 	}, nil
 }
 
+func customAPIKeySurface() *supportv1.Surface {
+	return &supportv1.Surface{
+		SurfaceId:     registry.SurfaceIDCustomAPIKey,
+		ProductInfoId: "custom-api-key",
+		Spec: &supportv1.Surface_Api{
+			Api: &supportv1.ApiSurface{},
+		},
+		EgressPolicyId: "custom.api",
+		AuthPolicyId:   "protocol.default.api-key",
+	}
+}
+
 // Get returns one effective provider surface by stable identity.
-func (s *Service) Get(ctx context.Context, surfaceID string) (*providerv1.ProviderSurface, error) {
-	surface, ok := s.builtins[surfaceID]
+func (s *Service) Get(ctx context.Context, surfaceID string) (*supportv1.Surface, error) {
+	surface, ok := s.surfaces[strings.TrimSpace(surfaceID)]
 	if !ok {
 		return nil, fmt.Errorf("platformk8s/providersurfaces: provider surface %q not found", surfaceID)
 	}
@@ -35,12 +67,12 @@ func (s *Service) Get(ctx context.Context, surfaceID string) (*providerv1.Provid
 }
 
 // List returns all effective provider surfaces.
-func (s *Service) List(ctx context.Context) ([]*providerv1.ProviderSurface, error) {
-	items := make([]*providerv1.ProviderSurface, 0, len(s.builtins))
-	for _, item := range s.builtins {
+func (s *Service) List(ctx context.Context) ([]*supportv1.Surface, error) {
+	items := make([]*supportv1.Surface, 0, len(s.surfaces))
+	for _, item := range s.surfaces {
 		items = append(items, cloneSurface(item))
 	}
-	slices.SortFunc(items, func(left, right *providerv1.ProviderSurface) int {
+	slices.SortFunc(items, func(left, right *supportv1.Surface) int {
 		switch {
 		case left.GetSurfaceId() < right.GetSurfaceId():
 			return -1

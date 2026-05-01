@@ -32,9 +32,10 @@ func TestProviderHostTelemetryTargetGroupsSkipsNonAPIAndInvalidURLs(t *testing.T
 		apiSurface(""),
 		apiSurface("mailto:ops@example.com"),
 		{
-			Runtime: &providerv1.ProviderSurfaceRuntime{
-				Access: &providerv1.ProviderSurfaceRuntime_Cli{Cli: &providerv1.ProviderCLISurfaceRuntime{CliId: "codex"}},
-			},
+			Endpoints: []*providerv1.ProviderEndpoint{{
+				Type:  providerv1.ProviderEndpointType_PROVIDER_ENDPOINT_TYPE_CLI,
+				Shape: &providerv1.ProviderEndpoint_Cli{Cli: &providerv1.ProviderCliEndpoint{CliId: "codex"}},
+			}},
 		},
 		apiSurface("https://valid.example.com/v1"),
 	}
@@ -78,12 +79,13 @@ func TestLimitProviderHostTelemetryTargetGroupsAllowsUnlimited(t *testing.T) {
 
 func apiSurface(baseURL string) *managementv1.ProviderView {
 	return &managementv1.ProviderView{
-		Runtime: &providerv1.ProviderSurfaceRuntime{
-			Access: &providerv1.ProviderSurfaceRuntime_Api{Api: &providerv1.ProviderAPISurfaceRuntime{
+		Endpoints: []*providerv1.ProviderEndpoint{{
+			Type: providerv1.ProviderEndpointType_PROVIDER_ENDPOINT_TYPE_API,
+			Shape: &providerv1.ProviderEndpoint_Api{Api: &providerv1.ProviderApiEndpoint{
 				Protocol: apiprotocolv1.Protocol_PROTOCOL_OPENAI_COMPATIBLE,
 				BaseUrl:  baseURL,
 			}},
-		},
+		}},
 	}
 }
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	providerv1 "code-code.internal/go-contract/provider/v1"
+	supportv1 "code-code.internal/go-contract/platform/support/v1"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -14,7 +14,7 @@ type Service struct {
 }
 
 type SurfaceRegistry interface {
-	Get(context.Context, string) (*providerv1.ProviderSurface, error)
+	Get(context.Context, string) (*supportv1.Surface, error)
 }
 
 type Config struct {

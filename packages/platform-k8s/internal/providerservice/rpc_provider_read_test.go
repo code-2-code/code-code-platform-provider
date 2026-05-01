@@ -6,9 +6,10 @@ import (
 
 	managementv1 "code-code.internal/go-contract/platform/management/v1"
 	providerservicev1 "code-code.internal/go-contract/platform/provider/v1"
+	supportv1 "code-code.internal/go-contract/platform/support/v1"
 	providerv1 "code-code.internal/go-contract/provider/v1"
-	providers "code-code.internal/platform-k8s/internal/providerservice/providers"
 	"code-code.internal/platform-k8s/internal/platform/providersurfaces"
+	providers "code-code.internal/platform-k8s/internal/providerservice/providers"
 )
 
 func TestListProvidersReturnsProviders(t *testing.T) {
@@ -54,7 +55,7 @@ func providerReadTestView() *managementv1.ProviderView {
 	}
 }
 
-func hasProviderSurface(items []*providerv1.ProviderSurface, surfaceID string) bool {
+func hasProviderSurface(items []*supportv1.Surface, surfaceID string) bool {
 	for _, item := range items {
 		if item.GetSurfaceId() == surfaceID {
 			return true
@@ -76,6 +77,14 @@ func (s providerReadService) Get(context.Context, string) (*managementv1.Provide
 }
 
 func (s providerReadService) Update(context.Context, string, providers.UpdateProviderCommand) (*managementv1.ProviderView, error) {
+	return nil, nil
+}
+
+func (s providerReadService) ApplyModelCatalog(context.Context, string, []*providerv1.ProviderModel) (*managementv1.ProviderView, error) {
+	return nil, nil
+}
+
+func (s providerReadService) ApplyProbeStatus(context.Context, string, providerv1.ProviderProbeKind, *providerv1.ProviderProbeRunState) (*managementv1.ProviderView, error) {
 	return nil, nil
 }
 

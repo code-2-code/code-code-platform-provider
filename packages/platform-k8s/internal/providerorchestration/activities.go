@@ -29,12 +29,12 @@ func (a *Activities) ConnectAPIKeyProvider(ctx context.Context, input APIKeyConn
 	command, err := providerconnect.NewConnectCommand(providerconnect.ConnectCommandInput{
 		AddMethod:   providerconnect.AddMethodAPIKey,
 		DisplayName: input.DisplayName,
-		VendorID:    input.VendorID,
+		SurfaceID:   input.SurfaceID,
 		APIKey: &providerconnect.APIKeyConnectInput{
-			CredentialID:         input.CredentialID,
-			BaseURL:              input.BaseURL,
-			Protocol:             input.Protocol,
-			SurfaceModelCatalogs: providerConnectSurfaceCatalogs(input.Catalogs),
+			CredentialID:  input.CredentialID,
+			BaseURL:       input.BaseURL,
+			Protocol:      input.Protocol,
+			SurfaceModels: providerConnectSurfaceModels(input.SurfaceID, input.Models),
 		},
 	})
 	if err != nil {
@@ -54,7 +54,7 @@ func (a *Activities) ConnectCLIOAuthProvider(ctx context.Context, input CLIOAuth
 	command, err := providerconnect.NewConnectCommand(providerconnect.ConnectCommandInput{
 		AddMethod:   providerconnect.AddMethodCLIOAuth,
 		DisplayName: input.DisplayName,
-		CLIID:       input.CLIID,
+		SurfaceID:   input.SurfaceID,
 	})
 	if err != nil {
 		return nil, temporal.NewNonRetryableApplicationError("build cli oauth connect command", "ValidationError", err)

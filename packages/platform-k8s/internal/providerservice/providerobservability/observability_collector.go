@@ -22,9 +22,11 @@ type ObservabilityCollector interface {
 // reads only the fields relevant to its probe logic.
 type ObservabilityCollectInput struct {
 	// Common
-	ProviderID string
-	SurfaceID  string
-	HTTPClient *http.Client
+	ProviderID   string
+	SurfaceID    string
+	CredentialID string
+	Auth         ObservabilityAuthClient
+	HTTPClient   *http.Client
 
 	// Vendor-specific
 	SchemaID       string

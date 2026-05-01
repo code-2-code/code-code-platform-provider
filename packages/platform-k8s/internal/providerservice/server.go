@@ -8,6 +8,7 @@ import (
 
 	managementv1 "code-code.internal/go-contract/platform/management/v1"
 	providerservicev1 "code-code.internal/go-contract/platform/provider/v1"
+	providerv1 "code-code.internal/go-contract/provider/v1"
 	"code-code.internal/platform-k8s/internal/providerservice/providercatalogs"
 	"code-code.internal/platform-k8s/internal/providerservice/providerobservability"
 	"code-code.internal/platform-k8s/internal/providerservice/providers"
@@ -42,6 +43,8 @@ type providerManagementService interface {
 	List(context.Context) ([]*managementv1.ProviderView, error)
 	Get(context.Context, string) (*managementv1.ProviderView, error)
 	Update(context.Context, string, providers.UpdateProviderCommand) (*managementv1.ProviderView, error)
+	ApplyModelCatalog(context.Context, string, []*providerv1.ProviderModel) (*managementv1.ProviderView, error)
+	ApplyProbeStatus(context.Context, string, providerv1.ProviderProbeKind, *providerv1.ProviderProbeRunState) (*managementv1.ProviderView, error)
 	Delete(context.Context, string) error
 }
 

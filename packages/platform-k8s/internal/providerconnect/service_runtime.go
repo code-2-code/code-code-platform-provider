@@ -6,12 +6,11 @@ import (
 )
 
 type providerConnectRuntime struct {
-	resources   providerConnectResources
-	support     providerConnectSupport
-	sessions    providerConnectSessions
-	postConnect *providerConnectPostConnectWorkflow
-	queries     *providerConnectQueries
-	logger      *slog.Logger
+	resources providerConnectResources
+	support   providerConnectSupport
+	sessions  providerConnectSessions
+	queries   *providerConnectQueries
+	logger    *slog.Logger
 }
 
 func newProviderConnectRuntime(config Config) (providerConnectRuntime, error) {
@@ -24,19 +23,18 @@ func newProviderConnectRuntime(config Config) (providerConnectRuntime, error) {
 		logger = slog.Default()
 	}
 	resources := newProviderConnectResources(config.Providers)
-	support := newProviderConnectSupport(config.VendorSupport, config.CLISupport)
+	support := newProviderConnectSupport(config.CLISupport)
 	sessions := newProviderConnectSessions(config.OAuthSessions, store)
 	queries := newProviderConnectQueries(
 		config.ProviderReader,
 		config.Surfaces,
 	)
 	return providerConnectRuntime{
-		resources:   resources,
-		support:     support,
-		sessions:    sessions,
-		postConnect: newProviderConnectPostConnectWorkflow(config.PostConnect, logger),
-		queries:     queries,
-		logger:      logger,
+		resources: resources,
+		support:   support,
+		sessions:  sessions,
+		queries:   queries,
+		logger:    logger,
 	}, nil
 }
 
@@ -54,12 +52,8 @@ func validateProviderConnectConfig(config Config) error {
 		return fmt.Errorf("platformk8s/providerconnect: provider reader is nil")
 	case config.Surfaces == nil:
 		return fmt.Errorf("platformk8s/providerconnect: provider surface service is nil")
-	case config.VendorSupport == nil:
-		return fmt.Errorf("platformk8s/providerconnect: vendor support service is nil")
 	case config.CLISupport == nil:
 		return fmt.Errorf("platformk8s/providerconnect: cli support service is nil")
-	case config.PostConnect == nil:
-		return fmt.Errorf("platformk8s/providerconnect: post-connect workflow runtime is nil")
 	case config.OAuthSessions == nil:
 		return fmt.Errorf("platformk8s/providerconnect: oauth session manager is nil")
 	default:

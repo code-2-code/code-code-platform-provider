@@ -20,6 +20,7 @@ type googleAIStudioRPCCallInput struct {
 	Origin           string
 	ProjectPath      string
 	MetricTimeSeries googleAIStudioMetricTimeSeriesRequest
+	Auth             googleAIStudioAuthInput
 }
 
 func (c *googleAIStudioObservabilityCollector) call(
@@ -57,6 +58,9 @@ func (c *googleAIStudioObservabilityCollector) call(
 	probeRequest.Header.Set("X-Goog-AuthUser", googleAIStudioRequestAuthUser)
 	probeRequest.Header.Set("X-Goog-Encode-Response-If-Executable", "base64")
 	probeRequest.Header.Set("X-User-Agent", "grpc-web-javascript/0.1")
+	if err := applyGoogleAIStudioAuthHeaders(ctx, probeRequest, input.Auth); err != nil {
+		return nil, err
+	}
 
 	recordSurfaceObservabilityRPCHost(span, probeRequest.URL.Host)
 	recordSurfaceObservabilityHeaderFingerprint(span, "x-goog-authuser", probeRequest.Header.Get("X-Goog-AuthUser"))
@@ -67,7 +71,6 @@ func (c *googleAIStudioObservabilityCollector) call(
 	}
 	if input.MetricTimeSeries.ResourceCode > 0 {
 		payloadAttributes = append(payloadAttributes,
-			attribute.String("code_code.observability.quota_metric.quota_type", input.MetricTimeSeries.QuotaType),
 			attribute.Int("code_code.observability.quota_metric.resource_code", input.MetricTimeSeries.ResourceCode),
 			attribute.Int("code_code.observability.quota_metric.series_code", input.MetricTimeSeries.SeriesCode),
 			attribute.Int("code_code.observability.quota_metric.tier_code", input.MetricTimeSeries.TierCode),
@@ -85,7 +88,7 @@ func (c *googleAIStudioObservabilityCollector) call(
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, observabilityMaxBodyReadSize))
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return nil, unauthorizedObservabilityError(
-			fmt.Sprintf("google ai studio quotas: %s unauthorized: status %d: %s", input.Method, resp.StatusCode, strings.TrimSpace(string(body))),
+			fmt.Sprintf("google ai studio quotas: %s unauthorized: status %d", input.Method, resp.StatusCode),
 		)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {

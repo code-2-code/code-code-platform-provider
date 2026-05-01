@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	apiprotocolv1 "code-code.internal/go-contract/api_protocol/v1"
 	providerservicev1 "code-code.internal/go-contract/platform/provider/v1"
 	providerv1 "code-code.internal/go-contract/provider/v1"
 	"code-code.internal/platform-k8s/internal/platform/providerstate"
@@ -66,15 +65,5 @@ func repositoryTestProvider() *providerv1.Provider {
 		ProviderId:  "provider-a",
 		DisplayName: "Provider A",
 		SurfaceId:   "definition-a",
-		Runtime: &providerv1.ProviderSurfaceRuntime{
-			DisplayName: "Surface A",
-			Origin:      providerv1.ProviderSurfaceOrigin_PROVIDER_SURFACE_ORIGIN_DERIVED,
-			Access: &providerv1.ProviderSurfaceRuntime_Api{
-				Api: &providerv1.ProviderAPISurfaceRuntime{
-					Protocol: apiprotocolv1.Protocol_PROTOCOL_OPENAI_COMPATIBLE,
-					BaseUrl:  "https://api.example.com/v1",
-				},
-			},
-		},
 	}
 }

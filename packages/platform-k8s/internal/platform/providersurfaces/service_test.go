@@ -1,13 +1,9 @@
 package providersurfaces
 
 import (
-	"slices"
 	"testing"
 
 	apiprotocolv1 "code-code.internal/go-contract/api_protocol/v1"
-	credentialv1 "code-code.internal/go-contract/credential/v1"
-	providerv1 "code-code.internal/go-contract/provider/v1"
-
 )
 
 func TestServiceListReturnsBuiltinSurfaces(t *testing.T) {
@@ -25,37 +21,31 @@ func TestServiceListReturnsBuiltinSurfaces(t *testing.T) {
 	if len(items) < 3 {
 		t.Fatalf("List() len = %d, want at least 3", len(items))
 	}
-	if got, want := items[0].GetSurfaceId(), "anthropic"; got != want {
-		t.Fatalf("first surface = %q, want %q", got, want)
-	}
 	openAICompatibleSurface, err := service.Get(t.Context(), "openai-compatible")
 	if err != nil {
 		t.Fatalf("Get() openai-compatible error = %v", err)
 	}
-	if got, want := openAICompatibleSurface.GetSupportedCredentialKinds()[0], credentialv1.CredentialKind_CREDENTIAL_KIND_API_KEY; got != want {
-		t.Fatalf("surface credential kind = %v, want %v", got, want)
+	if got, want := openAICompatibleSurface.GetProductInfoId(), "openai"; got != want {
+		t.Fatalf("product_info_id = %q, want %q", got, want)
 	}
-	if !slices.Contains(openAICompatibleSurface.GetApi().GetSupportedProtocols(), apiprotocolv1.Protocol_PROTOCOL_OPENAI_COMPATIBLE) {
-		t.Fatalf("surface api protocols = %v, want contains %v", openAICompatibleSurface.GetApi().GetSupportedProtocols(), apiprotocolv1.Protocol_PROTOCOL_OPENAI_COMPATIBLE)
+	if got, want := openAICompatibleSurface.GetApi().GetApiEndpoints()[0].GetProtocol(), apiprotocolv1.Protocol_PROTOCOL_OPENAI_COMPATIBLE; got != want {
+		t.Fatalf("endpoint protocol = %v, want %v", got, want)
 	}
-	if got, want := openAICompatibleSurface.GetKind(), providerv1.ProviderSurfaceKind_PROVIDER_SURFACE_KIND_API; got != want {
-		t.Fatalf("surface kind = %v, want %v", got, want)
-	}
-	if !openAICompatibleSurface.GetCapabilities().GetSupportsQuotaProbe() {
-		t.Fatal("openai-compatible supports_quota_probe = false, want true")
-	}
-	geminiSurface, err := service.Get(t.Context(), "gemini")
+	geminiSurface, err := service.Get(t.Context(), "google-gemini")
 	if err != nil {
 		t.Fatalf("Get() gemini error = %v", err)
 	}
-	if !geminiSurface.GetCapabilities().GetSupportsModelCatalogProbe() {
-		t.Fatal("gemini supports_model_catalog_probe = false, want true")
+	if got, want := geminiSurface.GetModelCatalogProbeId(), "google-models"; got != want {
+		t.Fatalf("model_catalog_probe_id = %q, want %q", got, want)
 	}
-	anthropicSurface, err := service.Get(t.Context(), "anthropic")
+	if got, want := geminiSurface.GetQuotaProbeId(), "google-aistudio-quotas"; got != want {
+		t.Fatalf("quota_probe_id = %q, want %q", got, want)
+	}
+	anthropicSurface, err := service.Get(t.Context(), "minimax-anthropic")
 	if err != nil {
 		t.Fatalf("Get() vendor error = %v", err)
 	}
-	if !anthropicSurface.GetCapabilities().GetSupportsModelCatalogProbe() {
-		t.Fatal("anthropic supports_model_catalog_probe = false, want true")
+	if got, want := anthropicSurface.GetModelCatalogProbeId(), "surface.minimax-anthropic"; got != want {
+		t.Fatalf("model_catalog_probe_id = %q, want %q", got, want)
 	}
 }

@@ -18,26 +18,23 @@ type providerConnectSessionFinalizer interface {
 }
 
 type providerConnectOAuthFinalizeRuntime struct {
-	resources   providerConnectResources
-	queries     *providerConnectQueries
-	postConnect *providerConnectPostConnectWorkflow
-	logger      *slog.Logger
+	resources providerConnectResources
+	queries   *providerConnectQueries
+	logger    *slog.Logger
 }
 
 func newProviderConnectOAuthFinalizeRuntime(
 	resources providerConnectResources,
 	queries *providerConnectQueries,
-	postConnect *providerConnectPostConnectWorkflow,
 	logger *slog.Logger,
 ) providerConnectOAuthFinalizeRuntime {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return providerConnectOAuthFinalizeRuntime{
-		resources:   resources,
-		queries:     queries,
-		postConnect: postConnect,
-		logger:      logger,
+		resources: resources,
+		queries:   queries,
+		logger:    logger,
 	}
 }
 
@@ -81,6 +78,5 @@ func (r providerConnectOAuthFinalizeRuntime) Finalize(
 		}
 		finalProvider = provider
 	}
-	r.postConnect.Dispatch(ctx, finalProvider.GetProviderId())
 	return finalProvider, nil
 }

@@ -5,14 +5,15 @@ import (
 
 	apiprotocolv1 "code-code.internal/go-contract/api_protocol/v1"
 	"code-code.internal/go-contract/domainerror"
+	"code-code.internal/platform-k8s/internal/platform/providersurfaces/registry"
 )
 
 // ConnectCommand carries one normalized provider connect request.
 type ConnectCommand struct {
 	addMethod   AddMethod
 	displayName string
-	vendorID    string
 	cliID       string
+	surfaceID   string
 	apiKey      *APIKeyConnectInput
 }
 
@@ -21,8 +22,8 @@ func NewConnectCommand(input ConnectCommandInput) (*ConnectCommand, error) {
 	command := &ConnectCommand{
 		addMethod:   input.AddMethod,
 		displayName: strings.TrimSpace(input.DisplayName),
-		vendorID:    strings.TrimSpace(input.VendorID),
 		cliID:       strings.TrimSpace(input.CLIID),
+		surfaceID:   strings.TrimSpace(input.SurfaceID),
 		apiKey:      cloneAPIKeyConnectInput(input.APIKey),
 	}
 	if command.AddMethod() == AddMethodUnspecified {
@@ -52,18 +53,18 @@ func (c *ConnectCommand) DisplayNameOr(fallback string) string {
 	return strings.TrimSpace(fallback)
 }
 
-func (c *ConnectCommand) VendorID() string {
-	if c == nil {
-		return ""
-	}
-	return strings.TrimSpace(c.vendorID)
-}
-
 func (c *ConnectCommand) CLIID() string {
 	if c == nil {
 		return ""
 	}
 	return strings.TrimSpace(c.cliID)
+}
+
+func (c *ConnectCommand) SurfaceID() string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.surfaceID)
 }
 
 func (c *ConnectCommand) APIKeyInput() *APIKeyConnectInput {
@@ -80,15 +81,19 @@ func (c *ConnectCommand) CredentialID() string {
 	return ""
 }
 
-func (c *ConnectCommand) SurfaceModelCatalogs() []*ProviderModelCatalogInput {
+func (c *ConnectCommand) SurfaceModels() []*SurfaceModelInput {
 	if input := c.APIKeyInput(); input != nil {
-		return input.SurfaceModelCatalogs
+		return input.SurfaceModels
 	}
 	return nil
 }
 
-func (c *ConnectCommand) IsVendorAPIKey() bool {
-	return c.VendorID() != ""
+func (c *ConnectCommand) IsSurfaceAPIKey() bool {
+	return c.SurfaceID() != ""
+}
+
+func (c *ConnectCommand) IsCustomAPIKey() bool {
+	return c.SurfaceID() == registry.SurfaceIDCustomAPIKey
 }
 
 func (c *ConnectCommand) ValidateAPIKey() error {
@@ -96,26 +101,18 @@ func (c *ConnectCommand) ValidateAPIKey() error {
 	if material == nil || strings.TrimSpace(material.CredentialID) == "" {
 		return domainerror.NewValidation("platformk8s/providerconnect: credential_id is required")
 	}
-	if c.IsVendorAPIKey() {
-		return c.validateVendorAPIKey()
+	if c.IsCustomAPIKey() {
+		return c.validateCustomAPIKey()
 	}
-	return c.validateCustomAPIKey()
+	if c.IsSurfaceAPIKey() {
+		return c.validateSurfaceAPIKey()
+	}
+	return domainerror.NewValidation("platformk8s/providerconnect: surface_id is required for API key connect")
 }
 
 func (c *ConnectCommand) ValidateCLIOAuth() error {
-	if c.CLIID() == "" {
-		return domainerror.NewValidation("platformk8s/providerconnect: cli_id is required for CLI OAuth")
-	}
-	return nil
-}
-
-func (c *ConnectCommand) validateVendorAPIKey() error {
-	material := c.APIKeyInput()
-	if strings.TrimSpace(material.BaseURL) != "" {
-		return domainerror.NewValidation("platformk8s/providerconnect: vendor API key connect does not accept base_url")
-	}
-	if material.Protocol != apiprotocolv1.Protocol_PROTOCOL_UNSPECIFIED {
-		return domainerror.NewValidation("platformk8s/providerconnect: vendor API key connect does not accept protocol")
+	if c.SurfaceID() == "" {
+		return domainerror.NewValidation("platformk8s/providerconnect: surface_id is required for CLI OAuth")
 	}
 	return nil
 }
@@ -127,6 +124,14 @@ func (c *ConnectCommand) validateCustomAPIKey() error {
 	}
 	if material.Protocol == apiprotocolv1.Protocol_PROTOCOL_UNSPECIFIED {
 		return domainerror.NewValidation("platformk8s/providerconnect: protocol is required for custom API key connect")
+	}
+	return nil
+}
+
+func (c *ConnectCommand) validateSurfaceAPIKey() error {
+	material := c.APIKeyInput()
+	if material.Protocol != apiprotocolv1.Protocol_PROTOCOL_UNSPECIFIED {
+		return domainerror.NewValidation("platformk8s/providerconnect: provider surface API key connect does not accept protocol")
 	}
 	return nil
 }

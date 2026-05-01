@@ -42,6 +42,39 @@ func observabilityUnauthorizedReason(err error) string {
 	return ""
 }
 
+func observabilityUnauthorizedSafeMessage(err error) string {
+	var target *observabilityUnauthorizedError
+	if !errors.As(err, &target) {
+		return "observability credential unauthorized"
+	}
+	message := strings.Join(strings.Fields(strings.TrimSpace(target.message)), " ")
+	if message == "" {
+		return "observability credential unauthorized"
+	}
+	lower := strings.ToLower(message)
+	for _, statusCode := range []string{"status 401", "status 403"} {
+		if idx := strings.Index(lower, statusCode); idx >= 0 {
+			return trimObservabilityUnauthorizedMessage(message[:idx+len(statusCode)])
+		}
+	}
+	if strings.Contains(lower, "egress auth replacement failed") ||
+		strings.Contains(lower, "request auth headers") ||
+		strings.Contains(lower, "observability credential") ||
+		strings.Contains(lower, "credential is required") {
+		return trimObservabilityUnauthorizedMessage(message)
+	}
+	return "observability credential unauthorized"
+}
+
+func trimObservabilityUnauthorizedMessage(message string) string {
+	message = strings.Join(strings.Fields(strings.TrimSpace(message)), " ")
+	const maxLen = 240
+	if len(message) <= maxLen {
+		return message
+	}
+	return strings.TrimSpace(message[:maxLen]) + "..."
+}
+
 func observabilityAuthBlockedReason(message string) string {
 	normalized := strings.Join(strings.Fields(strings.TrimSpace(message)), " ")
 	if normalized == "" {

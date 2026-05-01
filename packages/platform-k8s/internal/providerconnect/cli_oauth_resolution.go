@@ -43,7 +43,21 @@ func (r providerConnectCLIOAuthResolutionRuntime) ResolveConnect(
 	ctx context.Context,
 	command *ConnectCommand,
 ) (*cliOAuthResolvedTarget, error) {
+	surfaceID := command.SurfaceID()
+	if surfaceID == "" {
+		return nil, domainerror.NewValidation("platformk8s/providerconnect: surface_id is required for CLI OAuth")
+	}
+	surface, err := r.queries.LoadSurfaceMetadata(ctx, surfaceID)
+	if err != nil {
+		return nil, err
+	}
 	cliID := command.CLIID()
+	if cliID == "" {
+		cliID = strings.TrimSpace(surface.value.GetCli().GetCliId())
+	}
+	if cliID == "" {
+		return nil, domainerror.NewValidation("platformk8s/providerconnect: provider surface %q does not expose a CLI endpoint", surfaceID)
+	}
 	cli, err := r.loadCLISupport(ctx, cliID)
 	if err != nil {
 		return nil, err
@@ -53,18 +67,14 @@ func (r providerConnectCLIOAuthResolutionRuntime) ResolveConnect(
 		return nil, err
 	}
 	displayName := cli.DisplayNameOr(command.DisplayName())
-	candidate, err := newCLIOAuthCandidate(displayName, cliID, cli.value)
+	candidate, err := newCLIOAuthCandidate(displayName, cliID, surfaceID)
 	if err != nil {
 		return nil, err
 	}
-	definition, err := r.queries.LoadSurfaceMetadata(ctx, candidate.SurfaceID())
-	if err != nil {
+	if err := surface.ValidateCandidate(candidate, credentialv1.CredentialKind_CREDENTIAL_KIND_OAUTH); err != nil {
 		return nil, err
 	}
-	if err := definition.ValidateCandidate(candidate, credentialv1.CredentialKind_CREDENTIAL_KIND_OAUTH); err != nil {
-		return nil, err
-	}
-	target, err := candidate.CLIOAuthTarget(displayName, cli.VendorID(), cliID)
+	target, err := candidate.CLIOAuthTarget(displayName, cliID)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +103,7 @@ func (r providerConnectCLIOAuthResolutionRuntime) ResolveReauthorize(
 func (r providerConnectCLIOAuthResolutionRuntime) loadCLISupport(
 	ctx context.Context,
 	cliID string,
-) (*cliOAuthSupport, error) {
+) (*cliOAuth, error) {
 	if r.support.clis == nil {
 		return nil, domainerror.NewValidation("platformk8s/providerconnect: cli support reader is nil")
 	}
@@ -101,22 +111,22 @@ func (r providerConnectCLIOAuthResolutionRuntime) loadCLISupport(
 	if err != nil {
 		return nil, domainerror.NewNotFound("platformk8s/providerconnect: cli support %q not found", cliID)
 	}
-	return newCLIOAuthSupport(cliID, cli), nil
+	return newCLIOAuth(cliID, cli), nil
 }
 
-type cliOAuthSupport struct {
+type cliOAuth struct {
 	cliID string
 	value *supportv1.CLI
 }
 
-func newCLIOAuthSupport(cliID string, value *supportv1.CLI) *cliOAuthSupport {
-	return &cliOAuthSupport{
+func newCLIOAuth(cliID string, value *supportv1.CLI) *cliOAuth {
+	return &cliOAuth{
 		cliID: strings.TrimSpace(cliID),
 		value: value,
 	}
 }
 
-func (p *cliOAuthSupport) Flow() (credentialv1.OAuthAuthorizationFlow, error) {
+func (p *cliOAuth) Flow() (credentialv1.OAuthAuthorizationFlow, error) {
 	flow := credentialv1.OAuthAuthorizationFlow_O_AUTH_AUTHORIZATION_FLOW_UNSPECIFIED
 	if p != nil && p.value != nil && p.value.GetOauth() != nil {
 		flow = p.value.GetOauth().GetFlow()
@@ -127,7 +137,7 @@ func (p *cliOAuthSupport) Flow() (credentialv1.OAuthAuthorizationFlow, error) {
 	return flow, nil
 }
 
-func (p *cliOAuthSupport) DisplayNameOr(values ...string) string {
+func (p *cliOAuth) DisplayNameOr(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
 			return trimmed
@@ -141,14 +151,7 @@ func (p *cliOAuthSupport) DisplayNameOr(values ...string) string {
 	return p.CLIID()
 }
 
-func (p *cliOAuthSupport) VendorID() string {
-	if p == nil || p.value == nil {
-		return ""
-	}
-	return strings.TrimSpace(p.value.GetVendorId())
-}
-
-func (p *cliOAuthSupport) CLIID() string {
+func (p *cliOAuth) CLIID() string {
 	if p == nil {
 		return ""
 	}

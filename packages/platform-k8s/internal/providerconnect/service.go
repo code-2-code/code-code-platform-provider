@@ -7,9 +7,8 @@ import (
 
 	credentialv1 "code-code.internal/go-contract/credential/v1"
 	"code-code.internal/go-contract/domainerror"
-	providerv1 "code-code.internal/go-contract/provider/v1"
+	supportv1 "code-code.internal/go-contract/platform/support/v1"
 	clisupport "code-code.internal/platform-k8s/internal/platform/clidefinitions/support"
-	vendorsupport "code-code.internal/platform-k8s/internal/platform/vendors/support"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -19,7 +18,7 @@ type providerReader interface {
 }
 
 type surfaceMetadataReader interface {
-	Get(ctx context.Context, surfaceID string) (*providerv1.ProviderSurface, error)
+	Get(ctx context.Context, surfaceID string) (*supportv1.Surface, error)
 }
 
 type oauthSessionService interface {
@@ -39,9 +38,7 @@ type Config struct {
 	Providers      providerCreationService
 	ProviderReader providerReader
 	Surfaces       surfaceMetadataReader
-	VendorSupport  *vendorsupport.ManagementService
 	CLISupport     *clisupport.ManagementService
-	PostConnect    PostConnectWorkflowRuntime
 	OAuthSessions  oauthSessionService
 	Logger         *slog.Logger
 }

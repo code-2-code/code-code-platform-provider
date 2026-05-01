@@ -1,37 +1,28 @@
 package providerconnect
 
-func (c *connectProviderCandidate) CustomAPIKeyTarget(displayName string) (*connectTarget, error) {
-	return newConnectTarget(
+func (c *connectProviderCandidate) APIKeyTarget(displayName string) (*connectTarget, error) {
+	target, err := newConnectTarget(
 		AddMethodAPIKey,
 		displayName,
 		"",
-		"",
 		c.SurfaceID(),
-		c.Runtime(),
-		"custom",
+		c.Models(),
+		c.SurfaceID(),
 	)
+	if err != nil {
+		return nil, err
+	}
+	target.CustomAPIKeySurface = c.CustomAPIKeySurface()
+	return target, nil
 }
 
-func (c *connectProviderCandidate) VendorAPIKeyTarget(displayName, vendorID string) (*connectTarget, error) {
-	return newConnectTarget(
-		AddMethodAPIKey,
-		displayName,
-		vendorID,
-		"",
-		c.SurfaceID(),
-		c.Runtime(),
-		vendorID,
-	)
-}
-
-func (c *connectProviderCandidate) CLIOAuthTarget(displayName, vendorID, cliID string) (*connectTarget, error) {
+func (c *connectProviderCandidate) CLIOAuthTarget(displayName, cliID string) (*connectTarget, error) {
 	return newConnectTarget(
 		AddMethodCLIOAuth,
 		displayName,
-		vendorID,
 		cliID,
 		c.SurfaceID(),
-		c.Runtime(),
+		c.Models(),
 		cliID,
 	)
 }

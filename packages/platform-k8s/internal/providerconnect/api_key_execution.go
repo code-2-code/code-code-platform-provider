@@ -35,17 +35,6 @@ func newCustomAPIKeyConnectExecution(target *connectTarget, credentialID string)
 	}
 }
 
-func newVendorAPIKeyConnectExecution(plan *connectPlan, credentialID string) *apiKeyConnectExecution {
-	if plan == nil {
-		return &apiKeyConnectExecution{}
-	}
-	return &apiKeyConnectExecution{
-		credentialID:     strings.TrimSpace(credentialID),
-		targetProviderID: plan.TargetProviderID,
-		targets:          append([]*connectTarget(nil), plan.Targets...),
-	}
-}
-
 func (e *apiKeyConnectExecution) Execute(ctx context.Context, runtime apiKeyConnectRuntime) (*apiKeyConnectResult, error) {
 	if err := e.validate(); err != nil {
 		return nil, err

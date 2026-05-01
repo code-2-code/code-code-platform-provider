@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	apiprotocolv1 "code-code.internal/go-contract/api_protocol/v1"
 	credentialv1 "code-code.internal/go-contract/credential/v1"
 	modelv1 "code-code.internal/go-contract/model/v1"
 	providerv1 "code-code.internal/go-contract/provider/v1"
@@ -18,26 +17,13 @@ func TestRuntimeListModelsUsesConfiguredSurfaceCatalog(t *testing.T) {
 		&providerv1.Provider{
 			ProviderId:  "provider-1",
 			DisplayName: "Provider 1",
-			SurfaceId:   "instance-1",
-			Runtime: &providerv1.ProviderSurfaceRuntime{
-				DisplayName: "instance-1",
-				Origin:      providerv1.ProviderSurfaceOrigin_PROVIDER_SURFACE_ORIGIN_DERIVED,
-				Access: &providerv1.ProviderSurfaceRuntime_Api{
-					Api: &providerv1.ProviderAPISurfaceRuntime{
-						Protocol: apiprotocolv1.Protocol_PROTOCOL_OPENAI_COMPATIBLE,
-						BaseUrl:  "https://api.example.com/v1",
-					},
+			SurfaceId:   surfaceID,
+			Models: []*providerv1.ProviderModel{{
+				ProviderModelId: "model-fixed",
+				ModelRef: &modelv1.ModelRef{
+					ModelId: "shared-model",
 				},
-				Catalog: &providerv1.ProviderModelCatalog{
-					Models: []*providerv1.ProviderModelCatalogEntry{{
-						ProviderModelId: "model-fixed",
-						ModelRef: &modelv1.ModelRef{
-							ModelId: "shared-model",
-						},
-					}},
-					Source: providerv1.CatalogSource_CATALOG_SOURCE_FALLBACK_CONFIG,
-				},
-			},
+			}},
 		},
 		apiKeyCredential("test-key"),
 	)
@@ -45,21 +31,18 @@ func TestRuntimeListModelsUsesConfiguredSurfaceCatalog(t *testing.T) {
 		t.Fatalf("NewRuntime() error = %v", err)
 	}
 
-	catalog, err := runtime.ListModels(context.Background())
+	models, err := runtime.ListModels(context.Background())
 	if err != nil {
 		t.Fatalf("ListModels() error = %v", err)
 	}
-	if got, want := catalog.Source, providerv1.CatalogSource_CATALOG_SOURCE_FALLBACK_CONFIG; got != want {
-		t.Fatalf("catalog source = %s, want %s", got.String(), want.String())
+	if got, want := len(models), 1; got != want {
+		t.Fatalf("model count = %d, want %d", got, want)
 	}
-	if got, want := len(catalog.GetModels()), 1; got != want {
-		t.Fatalf("catalog model count = %d, want %d", got, want)
+	if got, want := models[0].GetProviderModelId(), "model-fixed"; got != want {
+		t.Fatalf("provider model id = %q, want %q", got, want)
 	}
-	if got, want := catalog.GetModels()[0].GetProviderModelId(), "model-fixed"; got != want {
-		t.Fatalf("catalog provider model id = %q, want %q", got, want)
-	}
-	if got, want := catalog.GetModels()[0].GetModelRef().GetModelId(), "shared-model"; got != want {
-		t.Fatalf("catalog model ref id = %q, want %q", got, want)
+	if got, want := models[0].GetModelRef().GetModelId(), "shared-model"; got != want {
+		t.Fatalf("model ref id = %q, want %q", got, want)
 	}
 }
 

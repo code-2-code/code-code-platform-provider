@@ -8,7 +8,7 @@ import (
 	"code-code.internal/platform-k8s/internal/providerservice/providers/openaicompatible"
 )
 
-// RegisterBuiltins registers implementation-owned provider runtimes that ship
+// RegisterBuiltins registers implementation-owned provider integrations that ship
 // with the platform.
 func RegisterBuiltins(lookup *Lookup) error {
 	if lookup == nil {

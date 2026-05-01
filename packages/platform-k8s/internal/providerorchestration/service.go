@@ -102,7 +102,6 @@ func (s *Server) connectAPIKeyProvider(ctx context.Context, request *managementv
 		CredentialId: credentialID,
 		DisplayName:  displayName,
 		Purpose:      credentialv1.CredentialPurpose_CREDENTIAL_PURPOSE_DATA_PLANE.String(),
-		VendorId:     strings.TrimSpace(request.GetVendorId()),
 		ApiKey:       strings.TrimSpace(material.GetApiKey()),
 	})
 	if err != nil {
@@ -115,10 +114,10 @@ func (s *Server) connectAPIKeyProvider(ctx context.Context, request *managementv
 	input := APIKeyConnectWorkflowInput{
 		CredentialID: credentialID,
 		DisplayName:  request.GetDisplayName(),
-		VendorID:     request.GetVendorId(),
+		SurfaceID:    request.GetSurfaceId(),
 		BaseURL:      material.GetBaseUrl(),
 		Protocol:     material.GetProtocol(),
-		Catalogs:     cloneManagementSurfaceCatalogs(material.GetSurfaceModelCatalogs()),
+		Models:       cloneProviderModels(material.GetModels()),
 		Compensate:   true,
 	}
 	var response managementv1.ConnectProviderResponse
@@ -126,16 +125,17 @@ func (s *Server) connectAPIKeyProvider(ctx context.Context, request *managementv
 	if err != nil {
 		return nil, err
 	}
+	s.submitProviderPostConnect(ctx, response.GetProvider().GetProviderId())
 	return &response, nil
 }
 
 func (s *Server) connectCLIOAuthProvider(ctx context.Context, request *managementv1.ConnectProviderRequest) (*managementv1.ConnectProviderResponse, error) {
 	input := CLIOAuthConnectWorkflowInput{
 		DisplayName: request.GetDisplayName(),
-		CLIID:       request.GetCliId(),
+		SurfaceID:   request.GetSurfaceId(),
 	}
 	var response managementv1.ConnectProviderResponse
-	err := s.executeWorkflow(ctx, "provider-connect-cli-"+temporalruntime.IDPart(request.GetCliId()+"-"+request.GetDisplayName()+"-"+time.Now().UTC().Format("20060102150405.000000000"), "cli"), ProviderCLIOAuthConnectWorkflowName, input, &response)
+	err := s.executeWorkflow(ctx, "provider-connect-cli-"+temporalruntime.IDPart(request.GetSurfaceId()+"-"+request.GetDisplayName()+"-"+time.Now().UTC().Format("20060102150405.000000000"), "surface"), ProviderCLIOAuthConnectWorkflowName, input, &response)
 	if err != nil {
 		return nil, err
 	}
@@ -150,6 +150,9 @@ func (s *Server) GetProviderConnectSession(ctx context.Context, request *managem
 	var response managementv1.GetProviderConnectSessionResponse
 	if err := s.executeWorkflow(ctx, "provider-connect-session-sync-"+temporalruntime.IDPart(request.GetSessionId()+"-"+time.Now().UTC().Format("20060102150405.000000000"), "session"), ProviderConnectSessionSyncWorkflowName, input, &response); err != nil {
 		return nil, err
+	}
+	if session := response.GetSession(); session.GetPhase() == providerservicev1.ProviderConnectSessionPhase_PROVIDER_CONNECT_SESSION_PHASE_SUCCEEDED {
+		s.submitProviderPostConnect(ctx, session.GetProvider().GetProviderId())
 	}
 	return &response, nil
 }
@@ -200,6 +203,7 @@ func (s *Server) updateAPIKeyAuthentication(ctx context.Context, request *manage
 	if err := s.executeWorkflow(ctx, "provider-auth-updated-"+temporalruntime.IDPart(provider.GetProviderId()+"-"+time.Now().UTC().Format("20060102150405.000000000"), "provider"), ProviderAPIKeyAuthUpdatedWorkflowName, input, &response); err != nil {
 		return nil, err
 	}
+	s.submitProviderPostConnect(ctx, response.GetProvider().GetProviderId())
 	return &response, nil
 }
 
@@ -232,7 +236,76 @@ func (s *Server) UpdateProviderObservabilityAuthentication(ctx context.Context, 
 	if err := s.executeWorkflow(ctx, "provider-observability-auth-updated-"+temporalruntime.IDPart(provider.GetProviderId()+"-"+time.Now().UTC().Format("20060102150405.000000000"), "provider"), ProviderObservabilityAuthUpdatedWorkflowName, input, &response); err != nil {
 		return nil, err
 	}
+	s.submitProviderPostConnect(ctx, response.GetProvider().GetProviderId())
 	return &response, nil
+}
+
+func (s *Server) ProbeProviderObservability(ctx context.Context, request *managementv1.ProbeProviderObservabilityRequest) (*managementv1.ProbeProviderObservabilityResponse, error) {
+	if request == nil {
+		return nil, status.Error(codes.InvalidArgument, "probe provider quota request is required")
+	}
+	providerIDs, err := s.probeProviderIDs(ctx, request.GetProviderId(), request.GetProviderIds())
+	if err != nil {
+		return nil, err
+	}
+	if len(providerIDs) == 0 {
+		workflowID := providerProbeSweepWorkflowID(providerProbeKindQuota)
+		if err := s.startWorkflow(ctx, workflowID, ProviderQuotaProbeSweepWorkflowName, ProviderProbeSweepWorkflowInput{}); err != nil {
+			return nil, err
+		}
+		return &managementv1.ProbeProviderObservabilityResponse{Message: "provider quota sweep started"}, nil
+	}
+	activities := s.probeActivities()
+	if len(providerIDs) == 1 {
+		response, err := activities.RunQuotaProbeTask(ctx, ProviderProbeTaskInput{ProviderID: providerIDs[0], Trigger: request.GetTrigger()})
+		if err != nil {
+			return nil, err
+		}
+		return response, nil
+	}
+	for _, providerID := range providerIDs {
+		if _, err := activities.RunQuotaProbeTask(ctx, ProviderProbeTaskInput{ProviderID: providerID, Trigger: request.GetTrigger()}); err != nil {
+			return nil, err
+		}
+	}
+	return &managementv1.ProbeProviderObservabilityResponse{
+		ProviderIds: providerIDs,
+		Message:     "provider quota probe tasks completed",
+	}, nil
+}
+
+func (s *Server) ProbeProviderModelCatalog(ctx context.Context, request *managementv1.ProbeProviderModelCatalogRequest) (*managementv1.ProbeProviderModelCatalogResponse, error) {
+	if request == nil {
+		return nil, status.Error(codes.InvalidArgument, "probe provider model catalog request is required")
+	}
+	providerIDs, err := s.probeProviderIDs(ctx, request.GetProviderId(), request.GetProviderIds())
+	if err != nil {
+		return nil, err
+	}
+	if len(providerIDs) == 0 {
+		workflowID := providerProbeSweepWorkflowID(providerProbeKindModelCatalog)
+		if err := s.startWorkflow(ctx, workflowID, ProviderModelCatalogProbeSweepWorkflowName, ProviderProbeSweepWorkflowInput{}); err != nil {
+			return nil, err
+		}
+		return &managementv1.ProbeProviderModelCatalogResponse{Message: "provider model catalog sweep started"}, nil
+	}
+	activities := s.probeActivities()
+	if len(providerIDs) == 1 {
+		response, err := activities.RunModelCatalogProbeTask(ctx, ProviderProbeTaskInput{ProviderID: providerIDs[0]})
+		if err != nil {
+			return nil, err
+		}
+		return response, nil
+	}
+	for _, providerID := range providerIDs {
+		if _, err := activities.RunModelCatalogProbeTask(ctx, ProviderProbeTaskInput{ProviderID: providerID}); err != nil {
+			return nil, err
+		}
+	}
+	return &managementv1.ProbeProviderModelCatalogResponse{
+		ProviderIds: providerIDs,
+		Message:     "provider model catalog probe tasks completed",
+	}, nil
 }
 
 func (s *Server) getProvider(ctx context.Context, providerID string) (*managementv1.ProviderView, error) {
@@ -269,25 +342,75 @@ func (s *Server) executeWorkflow(ctx context.Context, workflowID string, workflo
 	return run.Get(ctx, out)
 }
 
+func (s *Server) startWorkflow(ctx context.Context, workflowID string, workflowName string, input any) error {
+	_, err := s.temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
+		ID:                       strings.TrimSpace(workflowID),
+		TaskQueue:                s.taskQueue,
+		WorkflowIDReusePolicy:    enumspb.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
+		WorkflowIDConflictPolicy: enumspb.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING,
+	}, workflowName, input)
+	return err
+}
+
+func (s *Server) submitProviderPostConnect(ctx context.Context, providerID string) {
+	providerID = strings.TrimSpace(providerID)
+	if providerID == "" {
+		return
+	}
+	if err := s.startWorkflow(ctx, providerPostConnectWorkflowID(providerID), ProviderPostConnectWorkflowName, ProviderUpdatedWorkflowInput{ProviderID: providerID}); err != nil {
+		s.logger.Warn("provider post-connect workflow start failed",
+			"provider_id", providerID,
+			"error", err,
+		)
+	}
+}
+
+func providerPostConnectWorkflowID(providerID string) string {
+	return "provider-post-connect-" + temporalruntime.IDPart(providerID, "provider")
+}
+
+func (s *Server) probeProviderIDs(ctx context.Context, providerID string, providerIDs []string) ([]string, error) {
+	ids := normalizedProviderIDs(providerIDs)
+	if len(ids) == 0 && strings.TrimSpace(providerID) != "" {
+		ids = []string{strings.TrimSpace(providerID)}
+	}
+	return ids, nil
+}
+
+func (s *Server) probeActivities() *Activities {
+	return &Activities{auth: s.auth, provider: s.provider, connect: s.connect}
+}
+
+func normalizedProviderIDs(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
 func providerDisplayName(request *managementv1.ConnectProviderRequest) string {
 	if displayName := strings.TrimSpace(request.GetDisplayName()); displayName != "" {
 		return displayName
 	}
-	if vendorID := strings.TrimSpace(request.GetVendorId()); vendorID != "" {
-		return vendorID
-	}
-	if cliID := strings.TrimSpace(request.GetCliId()); cliID != "" {
-		return cliID
+	if surfaceID := strings.TrimSpace(request.GetSurfaceId()); surfaceID != "" {
+		return surfaceID
 	}
 	return "Provider"
 }
 
 func providerCredentialFallback(request *managementv1.ConnectProviderRequest) string {
-	if vendorID := strings.TrimSpace(request.GetVendorId()); vendorID != "" {
-		return vendorID
-	}
-	if cliID := strings.TrimSpace(request.GetCliId()); cliID != "" {
-		return cliID
+	if surfaceID := strings.TrimSpace(request.GetSurfaceId()); surfaceID != "" {
+		return surfaceID
 	}
 	return "custom-provider"
 }

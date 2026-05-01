@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	authv1 "code-code.internal/go-contract/platform/auth/v1"
+	"google.golang.org/grpc"
 )
 
 func TestDecodeGoogleAIStudioRPCBodySupportsDirectAndBase64(t *testing.T) {
@@ -160,14 +164,14 @@ func TestGoogleAIStudioObservabilityCollectorCollect(t *testing.T) {
 	requestBodies := map[string]string{}
 	var metricTimeSeriesBodies []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "" {
-			t.Fatalf("Authorization = %q, want empty before egress auth injection", got)
+		if got, want := r.Header.Get("Authorization"), "SAPISIDHASH test"; got != want {
+			t.Fatalf("Authorization = %q, want %q", got, want)
 		}
-		if got := r.Header.Get("Cookie"); got != "" {
-			t.Fatalf("Cookie = %q, want empty before egress auth injection", got)
+		if got, want := r.Header.Get("Cookie"), "SID=session"; got != want {
+			t.Fatalf("Cookie = %q, want %q", got, want)
 		}
-		if got := r.Header.Get("X-Goog-Api-Key"); got != "" {
-			t.Fatalf("X-Goog-Api-Key = %q, want empty before egress auth injection", got)
+		if got, want := r.Header.Get("X-Goog-Api-Key"), "page-key"; got != want {
+			t.Fatalf("X-Goog-Api-Key = %q, want %q", got, want)
 		}
 		if got, want := r.Header.Get("Origin"), googleAIStudioDefaultOrigin; got != want {
 			t.Fatalf("Origin = %q, want %q", got, want)
@@ -283,10 +287,12 @@ func TestGoogleAIStudioObservabilityCollectorCollect(t *testing.T) {
 		now: func() time.Time { return time.Unix(1718000000, 0) },
 	}
 	result, err := collector.Collect(context.Background(), ObservabilityCollectInput{
-		SchemaID:    "google",
-		ProviderID: "account-google",
-		SurfaceID:  "instance-google",
-		HTTPClient: server.Client(),
+		SchemaID:     "google",
+		ProviderID:   "account-google",
+		SurfaceID:    "gemini",
+		CredentialID: "account-google-observability",
+		Auth:         &fakeGoogleAIStudioAuthClient{projectID: "gen-lang-client-123"},
+		HTTPClient:   server.Client(),
 	})
 	if err != nil {
 		t.Fatalf("Collect() error = %v", err)
@@ -329,33 +335,35 @@ func TestGoogleAIStudioObservabilityCollectorCollect(t *testing.T) {
 			foundNonTextCategoryModel = true
 		}
 		if row.Labels["model_id"] == "gemini-2.5-flash" &&
-			row.Labels["quota_type"] == "TPD" &&
+			row.Labels["quota_type"] == "Tokens" &&
 			row.Labels["resource"] == "tokens" &&
 			row.Labels["window"] == "day" &&
 			row.MetricName == googleAIStudioQuotaLimitMetric {
 			foundTPD = true
 		}
 		if row.Labels["model_id"] == "gemini-2.5-flash" &&
-			row.Labels["quota_type"] == "TPD" &&
+			row.Labels["quota_type"] == "Tokens" &&
 			row.Labels["resource"] == "tokens" &&
 			row.Labels["window"] == "day" &&
 			row.MetricName == providerQuotaResetTimestampMetric {
 			foundTPDReset = true
 		}
 		if row.Labels["model_id"] == "gemini-2.5-flash" &&
-			row.Labels["quota_type"] == "RPM" &&
+			row.Labels["quota_type"] == "Requests" &&
+			row.Labels["window"] == "minute" &&
 			row.MetricName == providerQuotaRemainingMetric &&
 			row.Value == 2 {
 			foundRPMRemaining = true
 		}
 		if row.Labels["model_id"] == "gemini-2.5-flash" &&
-			row.Labels["quota_type"] == "TPM" &&
+			row.Labels["quota_type"] == "Tokens" &&
+			row.Labels["window"] == "minute" &&
 			row.MetricName == providerQuotaRemainingMetric &&
 			row.Value == 249985 {
 			foundTPMRemaining = true
 		}
 		if row.Labels["model_id"] == "gemini-2.5-flash" &&
-			row.Labels["quota_type"] == "RPD" &&
+			row.Labels["quota_type"] == "Requests" &&
 			row.Labels["resource"] == "requests" &&
 			row.Labels["window"] == "day" &&
 			row.MetricName == providerQuotaRemainingMetric &&
@@ -389,18 +397,18 @@ func TestGoogleAIStudioObservabilityCollectorCollect(t *testing.T) {
 	}
 }
 
-func TestGoogleAIStudioObservabilityCollectorCollectOmitsDirectSecretHeaders(t *testing.T) {
+func TestGoogleAIStudioObservabilityCollectorCollectAppliesResolvedAuthHeaders(t *testing.T) {
 	var requestCount int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount++
-		if got := r.Header.Get("Authorization"); got != "" {
-			t.Fatalf("Authorization = %q, want empty before egress auth injection", got)
+		if got, want := r.Header.Get("Authorization"), "SAPISIDHASH test"; got != want {
+			t.Fatalf("Authorization = %q, want %q", got, want)
 		}
-		if got := r.Header.Get("Cookie"); got != "" {
-			t.Fatalf("Cookie = %q, want empty before egress auth injection", got)
+		if got, want := r.Header.Get("Cookie"), "SID=session"; got != want {
+			t.Fatalf("Cookie = %q, want %q", got, want)
 		}
-		if got := r.Header.Get("X-Goog-Api-Key"); got != "" {
-			t.Fatalf("X-Goog-Api-Key = %q, want empty before egress auth injection", got)
+		if got, want := r.Header.Get("X-Goog-Api-Key"), "page-key"; got != want {
+			t.Fatalf("X-Goog-Api-Key = %q, want %q", got, want)
 		}
 		switch r.URL.Path {
 		case "/ListCloudProjects":
@@ -444,10 +452,12 @@ func TestGoogleAIStudioObservabilityCollectorCollectOmitsDirectSecretHeaders(t *
 		now: func() time.Time { return time.Unix(1718000000, 0) },
 	}
 	result, err := collector.Collect(context.Background(), ObservabilityCollectInput{
-		SchemaID:    "google",
-		ProviderID: "account-google",
-		SurfaceID:  "instance-google",
-		HTTPClient: server.Client(),
+		SchemaID:     "google",
+		ProviderID:   "account-google",
+		SurfaceID:    "gemini",
+		CredentialID: "account-google-observability",
+		Auth:         &fakeGoogleAIStudioAuthClient{projectID: "gen-lang-client-123"},
+		HTTPClient:   server.Client(),
 	})
 	if err != nil {
 		t.Fatalf("Collect() error = %v", err)
@@ -458,4 +468,70 @@ func TestGoogleAIStudioObservabilityCollectorCollectOmitsDirectSecretHeaders(t *
 	if got := len(result.GaugeRows); got == 0 {
 		t.Fatalf("metric rows = 0")
 	}
+}
+
+type fakeGoogleAIStudioAuthClient struct {
+	projectID string
+}
+
+func (c *fakeGoogleAIStudioAuthClient) GetEgressAuthPolicy(
+	_ context.Context,
+	request *authv1.GetEgressAuthPolicyRequest,
+	_ ...grpc.CallOption,
+) (*authv1.GetEgressAuthPolicyResponse, error) {
+	if got, want := strings.TrimSpace(request.GetPolicyId()), googleAIStudioSessionPolicyID; got != want {
+		return nil, fmt.Errorf("policy_id = %q, want %q", got, want)
+	}
+	return &authv1.GetEgressAuthPolicyResponse{
+		PolicyId:           googleAIStudioSessionPolicyID,
+		AdapterId:          "google-aistudio-session",
+		RequestHeaderNames: []string{"authorization", "cookie", "x-goog-api-key"},
+		RequestReplacementRules: []*authv1.EgressSimpleReplacementRule{
+			{HeaderName: "authorization"},
+			{HeaderName: "cookie"},
+			{HeaderName: "x-goog-api-key"},
+		},
+	}, nil
+}
+
+func (c *fakeGoogleAIStudioAuthClient) ReadCredentialMaterialFields(
+	_ context.Context,
+	request *authv1.ReadCredentialMaterialFieldsRequest,
+	_ ...grpc.CallOption,
+) (*authv1.ReadCredentialMaterialFieldsResponse, error) {
+	if got, want := strings.TrimSpace(request.GetCredentialId()), "account-google-observability"; got != want {
+		return nil, fmt.Errorf("credential_id = %q, want %q", got, want)
+	}
+	if got, want := request.GetPolicyRef().GetOwnerId(), googleAIStudioVendorID; got != want {
+		return nil, fmt.Errorf("owner_id = %q, want %q", got, want)
+	}
+	return &authv1.ReadCredentialMaterialFieldsResponse{
+		Values: map[string]string{materialKeyProjectID: c.projectID},
+	}, nil
+}
+
+func (c *fakeGoogleAIStudioAuthClient) ResolveEgressRequestHeaders(
+	_ context.Context,
+	request *authv1.ResolveEgressRequestHeadersRequest,
+	_ ...grpc.CallOption,
+) (*authv1.ResolveEgressRequestHeadersResponse, error) {
+	if got, want := strings.TrimSpace(request.GetCredentialId()), "account-google-observability"; got != want {
+		return nil, fmt.Errorf("credential_id = %q, want %q", got, want)
+	}
+	if got, want := strings.TrimSpace(request.GetPolicyId()), googleAIStudioSessionPolicyID; got != want {
+		return nil, fmt.Errorf("policy_id = %q, want %q", got, want)
+	}
+	if got, want := request.GetAdapterId(), "google-aistudio-session"; got != want {
+		return nil, fmt.Errorf("adapter_id = %q, want %q", got, want)
+	}
+	if got, want := request.GetOrigin(), googleAIStudioDefaultOrigin; got != want {
+		return nil, fmt.Errorf("origin = %q, want %q", got, want)
+	}
+	return &authv1.ResolveEgressRequestHeadersResponse{
+		Headers: []*authv1.EgressHeaderMutation{
+			{Name: "authorization", Value: "SAPISIDHASH test"},
+			{Name: "cookie", Value: "SID=session"},
+			{Name: "x-goog-api-key", Value: "page-key"},
+		},
+	}, nil
 }

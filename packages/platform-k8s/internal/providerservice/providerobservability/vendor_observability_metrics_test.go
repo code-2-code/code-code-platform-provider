@@ -3,71 +3,11 @@ package providerobservability
 import (
 	"context"
 	"testing"
-	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
-
-func TestSurfaceObservabilityMetricsRecordAuthUsable(t *testing.T) {
-	t.Parallel()
-
-	metrics, reader := newTestSurfaceObservabilityMetrics(t)
-	now := time.Unix(1700000000, 0).UTC()
-
-	metrics.record("cerebras", "account-a", TriggerManual, ProbeOutcomeExecuted, "", now, now.Add(time.Minute))
-	if got := observedMetricValue(t, reader, "vendor.auth.usable.test"); got != 1 {
-		t.Fatalf("authUsable after executed = %v, want 1", got)
-	}
-	if got := observedMetricValue(t, reader, "vendor.probe.last.outcome.test"); got != 1 {
-		t.Fatalf("lastOutcome after executed = %v, want 1", got)
-	}
-	if got, want := observedMetricValue(t, reader, "vendor.credential.last.used.test"), float64(now.Unix()); got != want {
-		t.Fatalf("credentialLastUsed after executed = %v, want %v", got, want)
-	}
-
-	authBlockedAt := now.Add(time.Minute)
-	metrics.record("cerebras", "account-a", TriggerManual, ProbeOutcomeAuthBlocked, "AUTH_BLOCKED", authBlockedAt, authBlockedAt.Add(time.Minute))
-	if got := observedMetricValue(t, reader, "vendor.auth.usable.test"); got != 0 {
-		t.Fatalf("authUsable after auth_blocked = %v, want 0", got)
-	}
-	if got := observedMetricValue(t, reader, "vendor.probe.last.outcome.test"); got != 3 {
-		t.Fatalf("lastOutcome after auth_blocked = %v, want 3", got)
-	}
-	if got, want := observedMetricValue(t, reader, "vendor.credential.last.used.test"), float64(authBlockedAt.Unix()); got != want {
-		t.Fatalf("credentialLastUsed after auth_blocked = %v, want %v", got, want)
-	}
-
-	failedAt := authBlockedAt.Add(time.Minute)
-	metrics.record("cerebras", "account-a", TriggerManual, ProbeOutcomeFailed, "", failedAt, failedAt.Add(time.Minute))
-	if got := observedMetricValue(t, reader, "vendor.auth.usable.test"); got != 0 {
-		t.Fatalf("authUsable after failed = %v, want previous 0", got)
-	}
-	if got := observedMetricValue(t, reader, "vendor.probe.last.outcome.test"); got != 5 {
-		t.Fatalf("lastOutcome after failed = %v, want 5", got)
-	}
-	if got, want := observedMetricValue(t, reader, "vendor.credential.last.used.test"), float64(authBlockedAt.Unix()); got != want {
-		t.Fatalf("credentialLastUsed after failed = %v, want previous %v", got, want)
-	}
-}
-
-func TestSurfaceObservabilityMetricsClearsKnownStaleReasons(t *testing.T) {
-	t.Parallel()
-
-	metrics, reader := newTestSurfaceObservabilityMetrics(t)
-	now := time.Unix(1700000000, 0).UTC()
-
-	metrics.record("google", "provider-google", TriggerManual, ProbeOutcomeAuthBlocked, "CREDENTIALS_MISSING", now, now.Add(time.Minute))
-
-	points := observedGaugePoints(t, reader, "vendor.probe.last.reason.test")
-	if got := reasonGaugeValue(points, "UPSTREAM_UNREACHABLE"); got != 0 {
-		t.Fatalf("stale upstream unreachable reason = %v, want 0", got)
-	}
-	if got := reasonGaugeValue(points, "CREDENTIALS_MISSING"); got != 1 {
-		t.Fatalf("current credentials reason = %v, want 1", got)
-	}
-}
 
 func TestVendorCollectedGaugeRecordsOTelAttributeSets(t *testing.T) {
 	t.Parallel()
@@ -121,17 +61,9 @@ func newTestSurfaceObservabilityMetrics(t *testing.T) (*observabilityMetrics, *s
 	t.Helper()
 	meter, reader := newTestMeter(t)
 	return &observabilityMetrics{
-		ownerLabel:         "vendor_id",
-		meter:              meter,
-		probeRuns:          mustTestCounter(t, meter, "vendor.probe.runs.test"),
-		probeLastRun:       mustTestGauge(t, meter, "vendor.probe.last.run.test"),
-		probeLastOutcome:   mustTestGauge(t, meter, "vendor.probe.last.outcome.test"),
-		probeLastReason:    mustTestGauge(t, meter, "vendor.probe.last.reason.test"),
-		probeNextAllowed:   mustTestGauge(t, meter, "vendor.probe.next.allowed.test"),
-		authUsable:         mustTestGauge(t, meter, "vendor.auth.usable.test"),
-		credentialLastUsed: mustTestGauge(t, meter, "vendor.credential.last.used.test"),
-		lastReasons:        map[string]string{},
-		collectedGauges:    map[string]collectedGauge{},
+		ownerLabel:      "vendor_id",
+		meter:           meter,
+		collectedGauges: map[string]collectedGauge{},
 	}, reader
 }
 
@@ -163,16 +95,6 @@ func attributeSet(attrs []attribute.KeyValue) map[string]string {
 		labels[string(attr.Key)] = attr.Value.AsString()
 	}
 	return labels
-}
-
-func reasonGaugeValue(points []metricdata.DataPoint[float64], reason string) float64 {
-	for _, point := range points {
-		labels := attributeSet(point.Attributes.ToSlice())
-		if labels["reason"] == reason {
-			return point.Value
-		}
-	}
-	return 0
 }
 
 func TestSanitizeVendorCollectorLabelsDropsInstanceLabels(t *testing.T) {

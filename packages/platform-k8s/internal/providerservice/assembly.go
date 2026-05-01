@@ -40,16 +40,17 @@ func assembleServer(config Config) (*Server, error) {
 		return nil, err
 	}
 	catalogMaterializer := providercatalogs.NewCatalogMaterializer(
-		providercatalogs.NewMaterializerProbe(probeExecutor),
+		providercatalogs.NewMaterializerProbe(probeExecutor, nil),
 		config.Logger,
 		providerCatalogModelFilter,
+		surfaceMetadata,
 	)
 	collectors := append(providerobservability.DefaultVendorCollectors(), providerobservability.DefaultOAuthCollectors()...)
 	surfaceObservability, err := providerobservability.NewSurfaceObservabilityRunner(providerobservability.SurfaceObservabilityRunnerConfig{
-		Providers:       providerRepository,
-		SurfaceRegistry: surfaceMetadata,
-		Collectors:      collectors,
-		Logger:          config.Logger,
+		Providers:  providerRepository,
+		Surfaces:   surfaceMetadata,
+		Collectors: collectors,
+		Logger:     config.Logger,
 	})
 	if err != nil {
 		return nil, err

@@ -7,57 +7,54 @@ import (
 	"strings"
 	"time"
 
+	supportv1 "code-code.internal/go-contract/platform/support/v1"
 	providerv1 "code-code.internal/go-contract/provider/v1"
+	"code-code.internal/platform-k8s/internal/platform/provideridentity"
 	"code-code.internal/platform-k8s/internal/providerservice/providers"
 )
 
-const (
-	surfaceObservabilityPendingBackoff = time.Minute
-	surfaceObservabilityFailureBackoff = 5 * time.Minute
-)
-
 type SurfaceObservabilityRunner struct {
-	probeStateTracker
-	collectors      map[string]ObservabilityCollector
-	now             func() time.Time
-	logger          *slog.Logger
-	providers       providers.Store
-	surfaceRegistry SurfaceRegistry
+	collectors map[string]ObservabilityCollector
+	metrics    *observabilityMetrics
+	now        func() time.Time
+	logger     *slog.Logger
+	providers  providers.Store
+	surfaces   SurfaceReader
+	auth       ObservabilityAuthClient
 }
 
 // Ensure interface compliance
 var _ Capability = (*SurfaceObservabilityRunner)(nil)
 
-type SurfaceRegistry interface {
-	Get(ctx context.Context, surfaceID string) (*providerv1.ProviderSurface, error)
+type SurfaceObservabilityRunnerConfig struct {
+	Providers  providers.Store
+	Surfaces   SurfaceReader
+	Collectors []ObservabilityCollector
+	Auth       ObservabilityAuthClient
+	Logger     *slog.Logger
+	Now        func() time.Time
 }
 
-type SurfaceObservabilityRunnerConfig struct {
-	Providers       providers.Store
-	SurfaceRegistry SurfaceRegistry
-	Collectors      []ObservabilityCollector
-	Logger          *slog.Logger
-	Now             func() time.Time
+type SurfaceReader interface {
+	Get(context.Context, string) (*supportv1.Surface, error)
 }
 
 func NewSurfaceObservabilityRunner(config SurfaceObservabilityRunnerConfig) (*SurfaceObservabilityRunner, error) {
 	switch {
 	case config.Providers == nil:
 		return nil, fmt.Errorf("providerobservability: providers store is nil")
-	case config.SurfaceRegistry == nil:
-		return nil, fmt.Errorf("providerobservability: surface registry is nil")
-	}
-	if config.Logger == nil {
-		config.Logger = slog.Default()
 	}
 	if config.Now == nil {
 		config.Now = time.Now
+	}
+	if config.Logger == nil {
+		config.Logger = slog.Default()
 	}
 	metrics, err := newObservabilityMetrics("gen_ai.provider.surface.probe", "schema_id")
 	if err != nil {
 		return nil, err
 	}
-	
+
 	collectors := map[string]ObservabilityCollector{}
 	for _, collector := range config.Collectors {
 		if collector == nil {
@@ -70,12 +67,13 @@ func NewSurfaceObservabilityRunner(config SurfaceObservabilityRunnerConfig) (*Su
 		collectors[collectorID] = collector
 	}
 	return &SurfaceObservabilityRunner{
-		probeStateTracker: newProbeStateTracker(metrics, surfaceObservabilityFailureBackoff),
-		collectors:        collectors,
-		now:               config.Now,
-		logger:            config.Logger,
-		providers:         config.Providers,
-		surfaceRegistry:   config.SurfaceRegistry,
+		collectors: collectors,
+		metrics:    metrics,
+		now:        config.Now,
+		logger:     config.Logger,
+		providers:  config.Providers,
+		surfaces:   config.Surfaces,
+		auth:       config.Auth,
 	}, nil
 }
 
@@ -91,11 +89,14 @@ func (r *SurfaceObservabilityRunner) Supports(ctx context.Context, provider *pro
 	if surfaceID == "" {
 		return "", false
 	}
-	surface, err := r.surfaceRegistry.Get(ctx, surfaceID)
-	if err != nil || surface == nil || surface.GetProbes() == nil || surface.GetProbes().GetQuota() == nil {
+	if r.surfaces == nil {
 		return "", false
 	}
-	schemaID = strings.TrimSpace(surface.GetProbes().GetQuota().GetSchemaId())
+	surface, err := r.surfaces.Get(ctx, surfaceID)
+	if err != nil {
+		return "", false
+	}
+	schemaID = strings.TrimSpace(surface.GetQuotaProbeId())
 	if schemaID == "" {
 		return "", false
 	}
@@ -103,7 +104,7 @@ func (r *SurfaceObservabilityRunner) Supports(ctx context.Context, provider *pro
 	return schemaID, ok
 }
 
-func (r *SurfaceObservabilityRunner) ProbeProvider(ctx context.Context, target ProbeTarget, trigger Trigger) (*ProbeResult, error) {
+func (r *SurfaceObservabilityRunner) ProbeProvider(ctx context.Context, target ProbeTarget, _ Trigger) (*ProbeResult, error) {
 	trimmedID := strings.TrimSpace(target.ProviderID)
 	if trimmedID == "" {
 		return nil, fmt.Errorf("providerobservability: provider id is empty")
@@ -119,61 +120,26 @@ func (r *SurfaceObservabilityRunner) ProbeProvider(ctx context.Context, target P
 			Outcome:    ProbeOutcomeUnsupported,
 			Message:    "provider has no supported observability surface",
 		}
-		return r.recordState(result, trigger, r.now().UTC(), surfaceObservabilityFailureBackoff), nil
+		return stampProbeResult(result, r.now().UTC()), nil
 	}
-	return r.probeProvider(ctx, provider, schemaID, trigger)
+	return r.probeProvider(ctx, provider, schemaID)
 }
 
-func (r *SurfaceObservabilityRunner) ProbeAllDue(ctx context.Context, trigger Trigger) error {
-	items, err := r.providers.List(ctx)
-	if err != nil {
-		return err
-	}
-	now := r.now().UTC()
-	for _, provider := range items {
-		if provider == nil {
-			continue
-		}
-		providerID := strings.TrimSpace(provider.GetProviderId())
-		if providerID == "" {
-			continue
-		}
-		schemaID, ok := r.Supports(ctx, provider)
-		if !ok {
-			continue
-		}
-		nextAllowedAt := r.nextAllowed(providerID, schemaID)
-		if !nextAllowedAt.IsZero() && now.Before(nextAllowedAt) {
-			continue
-		}
-		if _, probeErr := r.probeProvider(ctx, provider, schemaID, trigger); probeErr != nil {
-			r.logger.Warn("surface observability due operation failed",
-				"provider_id", providerID,
-				"error", probeErr,
-			)
-		}
-	}
-	return nil
-}
-
-func (r *SurfaceObservabilityRunner) probeProvider(ctx context.Context, provider *providerv1.Provider, schemaID string, trigger Trigger) (*ProbeResult, error) {
+func (r *SurfaceObservabilityRunner) probeProvider(ctx context.Context, provider *providerv1.Provider, schemaID string) (*ProbeResult, error) {
 	providerID := strings.TrimSpace(provider.GetProviderId())
 	now := r.now().UTC()
 	result := &ProbeResult{
 		OwnerKind:  OwnerKindSurface,
 		SchemaID:   schemaID,
 		ProviderID: providerID,
-	}
-	
-	if throttled, ok := probeThrottled(&r.probeStateTracker, r.metrics, result, schemaID, trigger, now); ok {
-		return throttled, nil
+		SurfaceID:  strings.TrimSpace(provider.GetSurfaceId()),
 	}
 
 	collector, ok := r.collectors[schemaID]
 	if !ok {
 		result.Outcome = ProbeOutcomeUnsupported
 		result.Message = "unsupported observability surface schema"
-		return r.recordState(result, trigger, now, surfaceObservabilityFailureBackoff), nil
+		return stampProbeResult(result, now), nil
 	}
 
 	httpClient, err := observabilityHTTPClient(ctx)
@@ -181,30 +147,32 @@ func (r *SurfaceObservabilityRunner) probeProvider(ctx context.Context, provider
 		result.Outcome = ProbeOutcomeFailed
 		result.Reason = observabilityFailureReasonFromError(err)
 		result.Message = err.Error()
-		return r.recordState(result, trigger, now, surfaceObservabilityFailureBackoff), nil
+		return stampProbeResult(result, now), nil
 	}
-	
+
 	// Prepare input
 	input := ObservabilityCollectInput{
-		ProviderID: providerID,
-		SurfaceID:  strings.TrimSpace(provider.GetSurfaceId()),
-		SchemaID:   schemaID,
-		HTTPClient: httpClient,
+		ProviderID:   providerID,
+		SurfaceID:    strings.TrimSpace(provider.GetSurfaceId()),
+		CredentialID: provideridentity.ObservabilityCredentialID(providerID),
+		Auth:         r.auth,
+		SchemaID:     schemaID,
+		HTTPClient:   httpClient,
 	}
 
 	collectResult, collectErr := collector.Collect(ctx, input)
-	
+
 	if collectErr != nil {
 		if isObservabilityUnauthorizedError(collectErr) {
 			result.Outcome = ProbeOutcomeAuthBlocked
 			result.Reason = observabilityUnauthorizedReason(collectErr)
-			result.Message = "observability credential unauthorized"
-			return r.recordState(result, trigger, now, surfaceObservabilityFailureBackoff), nil
+			result.Message = observabilityUnauthorizedSafeMessage(collectErr)
+			return stampProbeResult(result, now), nil
 		}
 		result.Outcome = ProbeOutcomeFailed
 		result.Reason = observabilityFailureReasonFromError(collectErr)
 		result.Message = "observability probe failed"
-		return r.recordState(result, trigger, now, surfaceObservabilityFailureBackoff), nil
+		return stampProbeResult(result, now), nil
 	}
 
 	if collectResult != nil {
@@ -213,5 +181,13 @@ func (r *SurfaceObservabilityRunner) probeProvider(ctx context.Context, provider
 
 	result.Outcome = ProbeOutcomeExecuted
 	result.Message = "observability probe succeeded"
-	return r.recordState(result, trigger, now, surfaceObservabilityPendingBackoff), nil
+	return stampProbeResult(result, now), nil
+}
+
+func stampProbeResult(result *ProbeResult, now time.Time) *ProbeResult {
+	if result == nil {
+		return nil
+	}
+	result.LastAttemptAt = timePointerCopy(&now)
+	return result
 }

@@ -13,13 +13,12 @@ func TestNewConnectCommandRequiresAddMethod(t *testing.T) {
 	}
 }
 
-func TestConnectCommandRejectsVendorAPIKeySurfaceFields(t *testing.T) {
+func TestConnectCommandRejectsSurfaceAPIKeyProtocolOverride(t *testing.T) {
 	command, err := NewConnectCommand(ConnectCommandInput{
 		AddMethod: AddMethodAPIKey,
-		VendorID:  "openai",
+		SurfaceID: "openai-compatible",
 		APIKey: &APIKeyConnectInput{
 			CredentialID: "credential-openai",
-			BaseURL:      "https://api.example.com/v1",
 			Protocol:     apiprotocolv1.Protocol_PROTOCOL_OPENAI_COMPATIBLE,
 		},
 	})
@@ -34,6 +33,7 @@ func TestConnectCommandRejectsVendorAPIKeySurfaceFields(t *testing.T) {
 func TestConnectCommandRequiresCustomAPIKeyFields(t *testing.T) {
 	command, err := NewConnectCommand(ConnectCommandInput{
 		AddMethod: AddMethodAPIKey,
+		SurfaceID: "custom.api",
 		APIKey: &APIKeyConnectInput{
 			CredentialID: "credential-custom",
 		},
@@ -46,7 +46,24 @@ func TestConnectCommandRequiresCustomAPIKeyFields(t *testing.T) {
 	}
 }
 
-func TestConnectCommandRequiresCLIIDForOAuth(t *testing.T) {
+func TestConnectCommandAcceptsSurfaceAPIKeyBaseURLMaterial(t *testing.T) {
+	command, err := NewConnectCommand(ConnectCommandInput{
+		AddMethod: AddMethodAPIKey,
+		SurfaceID: "openai-compatible",
+		APIKey: &APIKeyConnectInput{
+			CredentialID: "credential-openai",
+			BaseURL:      "https://api.example.com/v1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewConnectCommand() error = %v", err)
+	}
+	if err := command.ValidateAPIKey(); err != nil {
+		t.Fatalf("ValidateAPIKey() error = %v", err)
+	}
+}
+
+func TestConnectCommandRequiresSurfaceIDForOAuth(t *testing.T) {
 	command, err := NewConnectCommand(ConnectCommandInput{
 		AddMethod: AddMethodCLIOAuth,
 	})
@@ -61,7 +78,7 @@ func TestConnectCommandRequiresCLIIDForOAuth(t *testing.T) {
 func TestConnectCommandTrimsCredentialID(t *testing.T) {
 	command, err := NewConnectCommand(ConnectCommandInput{
 		AddMethod: AddMethodAPIKey,
-		VendorID:  "openai",
+		SurfaceID: "openai-compatible",
 		APIKey: &APIKeyConnectInput{
 			CredentialID: " credential-openai ",
 		},

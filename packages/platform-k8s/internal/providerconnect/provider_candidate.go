@@ -3,146 +3,71 @@ package providerconnect
 import (
 	"strings"
 
-	apiprotocolv1 "code-code.internal/go-contract/api_protocol/v1"
 	"code-code.internal/go-contract/domainerror"
-	supportv1 "code-code.internal/go-contract/platform/support/v1"
 	providerv1 "code-code.internal/go-contract/provider/v1"
-	clisupport "code-code.internal/platform-k8s/internal/platform/clidefinitions/support"
+	"code-code.internal/platform-k8s/internal/platform/providersurfaces/registry"
 	"google.golang.org/protobuf/proto"
 )
 
 type connectProviderCandidate struct {
-	surfaceID string
-	runtime   *providerv1.ProviderSurfaceRuntime
+	surfaceID           string
+	endpoint            *providerv1.ProviderEndpoint
+	models              []*providerv1.ProviderModel
+	customAPIKeySurface *providerv1.CustomAPIKeySurface
 }
 
 func newCustomAPIKeyCandidate(
 	displayName string,
 	material *APIKeyConnectInput,
-	catalogs *surfaceCatalogSet,
+	surfaceModels *surfaceModelSet,
 ) (*connectProviderCandidate, error) {
+	_ = displayName
 	if material == nil {
 		return nil, domainerror.NewValidation("platformk8s/providerconnect: api key material is required")
 	}
-	surfaceID := apiSurfaceIDForProtocol(material.Protocol)
-	catalog := catalogs.Override(surfaceID, nil)
-	return newConnectProviderCandidate(surfaceID, &providerv1.ProviderSurfaceRuntime{
-		DisplayName:         strings.TrimSpace(displayName),
-		Origin:              providerv1.ProviderSurfaceOrigin_PROVIDER_SURFACE_ORIGIN_MANUAL,
-		Catalog:             catalog,
-		ModelCatalogProbeId: surfaceModelCatalogProbeID(surfaceID),
-		Access: &providerv1.ProviderSurfaceRuntime_Api{
-			Api: &providerv1.ProviderAPISurfaceRuntime{
-				Protocol: material.Protocol,
-				BaseUrl:  strings.TrimSpace(material.BaseURL),
-			},
-		},
-	}, "platformk8s/providerconnect: invalid custom provider")
-}
-
-func newVendorAPIKeyCandidates(
-	vendor *supportv1.Vendor,
-	catalogs *surfaceCatalogSet,
-) ([]*connectProviderCandidate, error) {
-	if vendor == nil {
-		return nil, domainerror.NewValidation("platformk8s/providerconnect: vendor support is nil")
+	surfaceID := registry.SurfaceIDCustomAPIKey
+	endpoint := &providerv1.ProviderEndpoint{
+		Type: providerv1.ProviderEndpointType_PROVIDER_ENDPOINT_TYPE_API,
+		Shape: &providerv1.ProviderEndpoint_Api{Api: &providerv1.ProviderApiEndpoint{
+			Protocol: material.Protocol,
+			BaseUrl:  strings.TrimSpace(material.BaseURL),
+		}},
 	}
-	out := []*connectProviderCandidate{}
-	for _, binding := range vendor.GetProviderBindings() {
-		bindingSurfaceID := strings.TrimSpace(binding.GetProviderBinding().GetSurfaceId())
-		for _, template := range binding.GetSurfaceTemplates() {
-			if template == nil {
-				continue
-			}
-			surfaceID := strings.TrimSpace(template.GetSurfaceId())
-			if surfaceID == "" {
-				surfaceID = bindingSurfaceID
-			}
-			runtime := cloneProviderSurfaceRuntime(template.GetRuntime())
-			if runtime == nil {
-				continue
-			}
-			applyVendorBindingRuntimeCapabilities(runtime, binding.GetProviderBinding())
-			runtime.Origin = providerv1.ProviderSurfaceOrigin_PROVIDER_SURFACE_ORIGIN_DERIVED
-			runtime.Catalog = catalogs.Override(surfaceID, template.GetBootstrapCatalog())
-			candidate, err := newConnectProviderCandidate(surfaceID, runtime, "platformk8s/providerconnect: invalid provider")
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, candidate)
-		}
-	}
-	if len(out) == 0 {
-		return nil, domainerror.NewValidation("platformk8s/providerconnect: vendor support does not expose any providers")
-	}
-	if err := catalogs.ValidateAllMatched(); err != nil {
+	candidate, err := newConnectProviderCandidate(surfaceID, endpoint, surfaceModels.Models(surfaceID, nil), "platformk8s/providerconnect: invalid custom provider")
+	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	candidate.customAPIKeySurface = &providerv1.CustomAPIKeySurface{
+		BaseUrl:  strings.TrimSpace(material.BaseURL),
+		Protocol: material.Protocol,
+	}
+	return candidate, nil
 }
 
-func applyVendorBindingRuntimeCapabilities(runtime *providerv1.ProviderSurfaceRuntime, binding *supportv1.ProviderBinding) {
-	if runtime == nil || binding == nil {
-		return
+func newCLIOAuthCandidate(displayName, cliID, surfaceID string) (*connectProviderCandidate, error) {
+	_ = displayName
+	endpoint := &providerv1.ProviderEndpoint{
+		Type: providerv1.ProviderEndpointType_PROVIDER_ENDPOINT_TYPE_CLI,
+		Shape: &providerv1.ProviderEndpoint_Cli{Cli: &providerv1.ProviderCliEndpoint{
+			CliId: strings.TrimSpace(cliID),
+		}},
 	}
-	if strings.TrimSpace(runtime.GetModelCatalogProbeId()) == "" {
-		runtime.ModelCatalogProbeId = strings.TrimSpace(binding.GetModelCatalogProbeId())
-	}
-	if strings.TrimSpace(runtime.GetQuotaProbeId()) == "" {
-		runtime.QuotaProbeId = strings.TrimSpace(binding.GetQuotaProbeId())
-	}
-	if strings.TrimSpace(runtime.GetEgressRulesetId()) == "" {
-		runtime.EgressRulesetId = strings.TrimSpace(binding.GetEgressPolicyId())
-	}
+	return newConnectProviderCandidate(surfaceID, endpoint, nil, "platformk8s/providerconnect: invalid cli provider")
 }
 
-func newCLIOAuthCandidate(displayName, cliID string, cli *supportv1.CLI) (*connectProviderCandidate, error) {
-	surfaceID := clisupport.OAuthProviderSurfaceID(cli)
-	return newConnectProviderCandidate(surfaceID, &providerv1.ProviderSurfaceRuntime{
-		DisplayName:         strings.TrimSpace(displayName),
-		Origin:              providerv1.ProviderSurfaceOrigin_PROVIDER_SURFACE_ORIGIN_DERIVED,
-		ModelCatalogProbeId: clisupport.OAuthModelCatalogProbeID(cli),
-		QuotaProbeId:        clisupport.OAuthQuotaProbeID(cli),
-		EgressRulesetId:     clisupport.OAuthEgressPolicyID(cli),
-		Access: &providerv1.ProviderSurfaceRuntime_Cli{
-			Cli: &providerv1.ProviderCLISurfaceRuntime{CliId: strings.TrimSpace(cliID)},
-		},
-	}, "platformk8s/providerconnect: invalid cli provider")
-}
-
-func newConnectProviderCandidate(surfaceID string, runtime *providerv1.ProviderSurfaceRuntime, message string) (*connectProviderCandidate, error) {
+func newConnectProviderCandidate(surfaceID string, endpoint *providerv1.ProviderEndpoint, models []*providerv1.ProviderModel, message string) (*connectProviderCandidate, error) {
 	surfaceID = strings.TrimSpace(surfaceID)
 	if surfaceID == "" {
 		return nil, domainerror.NewValidation("%s: surface_id is required", message)
 	}
-	if err := providerv1.ValidateProviderSurfaceRuntime(runtime); err != nil {
+	if err := providerv1.ValidateProviderEndpoint(endpoint); err != nil {
 		return nil, domainerror.NewValidation("%s: %v", message, err)
 	}
 	return &connectProviderCandidate{
 		surfaceID: surfaceID,
-		runtime:   cloneProviderSurfaceRuntime(runtime),
+		endpoint:  proto.Clone(endpoint).(*providerv1.ProviderEndpoint),
+		models:    cloneProviderModels(models),
 	}, nil
-}
-
-func apiSurfaceIDForProtocol(protocol apiprotocolv1.Protocol) string {
-	switch protocol {
-	case apiprotocolv1.Protocol_PROTOCOL_GEMINI:
-		return "gemini"
-	case apiprotocolv1.Protocol_PROTOCOL_ANTHROPIC:
-		return "anthropic"
-	case apiprotocolv1.Protocol_PROTOCOL_OPENAI_COMPATIBLE, apiprotocolv1.Protocol_PROTOCOL_OPENAI_RESPONSES:
-		return "openai-compatible"
-	default:
-		return ""
-	}
-}
-
-func surfaceModelCatalogProbeID(surfaceID string) string {
-	surfaceID = strings.TrimSpace(surfaceID)
-	if surfaceID == "" {
-		return ""
-	}
-	return "surface." + surfaceID
 }
 
 func (c *connectProviderCandidate) SurfaceID() string {
@@ -152,16 +77,23 @@ func (c *connectProviderCandidate) SurfaceID() string {
 	return strings.TrimSpace(c.surfaceID)
 }
 
-func (c *connectProviderCandidate) Runtime() *providerv1.ProviderSurfaceRuntime {
+func (c *connectProviderCandidate) Endpoint() *providerv1.ProviderEndpoint {
+	if c == nil || c.endpoint == nil {
+		return nil
+	}
+	return proto.Clone(c.endpoint).(*providerv1.ProviderEndpoint)
+}
+
+func (c *connectProviderCandidate) Models() []*providerv1.ProviderModel {
 	if c == nil {
 		return nil
 	}
-	return cloneProviderSurfaceRuntime(c.runtime)
+	return cloneProviderModels(c.models)
 }
 
-func cloneProviderSurfaceRuntime(runtime *providerv1.ProviderSurfaceRuntime) *providerv1.ProviderSurfaceRuntime {
-	if runtime == nil {
+func (c *connectProviderCandidate) CustomAPIKeySurface() *providerv1.CustomAPIKeySurface {
+	if c == nil || c.customAPIKeySurface == nil {
 		return nil
 	}
-	return proto.Clone(runtime).(*providerv1.ProviderSurfaceRuntime)
+	return proto.Clone(c.customAPIKeySurface).(*providerv1.CustomAPIKeySurface)
 }

@@ -14,14 +14,14 @@ var googleAIStudioMetricTimeSeriesDailyAggregationCode = 2
 
 type googleAIStudioMetricTimeSeriesRequest struct {
 	TierCode        int
-	QuotaType       string
 	ResourceCode    int
 	SeriesCode      int
 	AggregationCode *int
 }
 
 type googleAIStudioMetricTimeSeriesDescriptor struct {
-	QuotaType       string
+	Resource        string
+	Window          string
 	ResourceCode    int
 	SeriesCode      int
 	AggregationCode *int
@@ -29,17 +29,20 @@ type googleAIStudioMetricTimeSeriesDescriptor struct {
 
 var googleAIStudioMetricTimeSeriesDescriptors = []googleAIStudioMetricTimeSeriesDescriptor{
 	{
-		QuotaType:    "RPM",
+		Resource:     "requests",
+		Window:       "minute",
 		ResourceCode: 1,
 		SeriesCode:   2,
 	},
 	{
-		QuotaType:    "TPM",
+		Resource:     "tokens",
+		Window:       "minute",
 		ResourceCode: 2,
 		SeriesCode:   2,
 	},
 	{
-		QuotaType:       "RPD",
+		Resource:        "requests",
+		Window:          "day",
 		ResourceCode:    1,
 		SeriesCode:      1,
 		AggregationCode: &googleAIStudioMetricTimeSeriesDailyAggregationCode,
@@ -98,12 +101,13 @@ func (c *googleAIStudioObservabilityCollector) enrichGoogleAIStudioMetricTimeSer
 	fetchedQuotaTypes := map[string]struct{}{}
 	for _, descriptor := range descriptors {
 		body, err := c.call(ctx, httpClient, googleAIStudioRPCCallInput{
+			BaseURL:     input.BaseURL,
 			Method:      "FetchMetricTimeSeries",
 			Origin:      input.Origin,
 			ProjectPath: input.ProjectPath,
+			Auth:        input.Auth,
 			MetricTimeSeries: googleAIStudioMetricTimeSeriesRequest{
 				TierCode:        tierCode,
-				QuotaType:       descriptor.QuotaType,
 				ResourceCode:    descriptor.ResourceCode,
 				SeriesCode:      descriptor.SeriesCode,
 				AggregationCode: descriptor.AggregationCode,
@@ -114,11 +118,11 @@ func (c *googleAIStudioObservabilityCollector) enrichGoogleAIStudioMetricTimeSer
 		}
 		payload, err := decodeGoogleAIStudioRPCBody(body)
 		if err != nil {
-			return nil, fmt.Errorf("providerobservability: google ai studio quotas: decode FetchMetricTimeSeries %s: %w", descriptor.QuotaType, err)
+			return nil, fmt.Errorf("providerobservability: google ai studio quotas: decode FetchMetricTimeSeries %s:%s: %w", descriptor.Resource, descriptor.Window, err)
 		}
-		fetchedQuotaTypes[descriptor.QuotaType] = struct{}{}
+		fetchedQuotaTypes[descriptor.Resource+":"+descriptor.Window] = struct{}{}
 		for modelID, value := range parseGoogleAIStudioMetricTimeSeriesUsage(payload, targetModelIDs) {
-			usageByKey[newGoogleAIStudioMetricTimeSeriesUsageKey(modelID, descriptor.QuotaType)] = value
+			usageByKey[newGoogleAIStudioMetricTimeSeriesUsageKey(modelID, descriptor.Resource, descriptor.Window)] = value
 		}
 	}
 	return googleAIStudioApplyMetricTimeSeriesUsage(models, fetchedQuotaTypes, usageByKey), nil
@@ -137,15 +141,15 @@ func googleAIStudioMetricTimeSeriesTargetModelIDs(models []googleAIStudioQuotaMo
 }
 
 func googleAIStudioMetricTimeSeriesDescriptorsForModels(models []googleAIStudioQuotaModel) []googleAIStudioMetricTimeSeriesDescriptor {
-	wantedQuotaTypes := map[string]struct{}{}
+	wanted := map[string]struct{}{}
 	for _, model := range models {
 		for _, limit := range model.Limits {
-			wantedQuotaTypes[limit.QuotaType] = struct{}{}
+			wanted[limit.Resource+":"+limit.Window] = struct{}{}
 		}
 	}
 	descriptors := make([]googleAIStudioMetricTimeSeriesDescriptor, 0, len(googleAIStudioMetricTimeSeriesDescriptors))
 	for _, descriptor := range googleAIStudioMetricTimeSeriesDescriptors {
-		if _, ok := wantedQuotaTypes[descriptor.QuotaType]; ok {
+		if _, ok := wanted[descriptor.Resource+":"+descriptor.Window]; ok {
 			descriptors = append(descriptors, descriptor)
 		}
 	}
@@ -169,10 +173,10 @@ func googleAIStudioApplyMetricTimeSeriesUsage(
 	for modelIndex := range models {
 		for limitIndex := range models[modelIndex].Limits {
 			limit := &models[modelIndex].Limits[limitIndex]
-			if _, ok := fetchedQuotaTypes[limit.QuotaType]; !ok {
+			if _, ok := fetchedQuotaTypes[limit.Resource+":"+limit.Window]; !ok {
 				continue
 			}
-			used := usageByKey[newGoogleAIStudioMetricTimeSeriesUsageKey(models[modelIndex].ModelID, limit.QuotaType)]
+			used := usageByKey[newGoogleAIStudioMetricTimeSeriesUsageKey(models[modelIndex].ModelID, limit.Resource, limit.Window)]
 			remaining := limit.Value - used
 			if remaining < 0 {
 				remaining = 0
@@ -266,13 +270,15 @@ func googleAIStudioMetricTimeSeriesTimestamp(value any) bool {
 }
 
 type googleAIStudioMetricTimeSeriesUsageKey struct {
-	ModelID   string
-	QuotaType string
+	ModelID  string
+	Resource string
+	Window   string
 }
 
-func newGoogleAIStudioMetricTimeSeriesUsageKey(modelID string, quotaType string) googleAIStudioMetricTimeSeriesUsageKey {
+func newGoogleAIStudioMetricTimeSeriesUsageKey(modelID string, resource string, window string) googleAIStudioMetricTimeSeriesUsageKey {
 	return googleAIStudioMetricTimeSeriesUsageKey{
-		ModelID:   strings.TrimSpace(modelID),
-		QuotaType: strings.TrimSpace(quotaType),
+		ModelID:  strings.TrimSpace(modelID),
+		Resource: strings.TrimSpace(resource),
+		Window:   strings.TrimSpace(window),
 	}
 }

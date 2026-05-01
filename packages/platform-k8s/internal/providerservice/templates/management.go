@@ -11,9 +11,11 @@ import (
 
 	"code-code.internal/go-contract/domainerror"
 	managementv1 "code-code.internal/go-contract/platform/management/v1"
+	supportv1 "code-code.internal/go-contract/platform/support/v1"
 	providerv1 "code-code.internal/go-contract/provider/v1"
 	platformv1alpha1 "code-code.internal/platform-k8s/api/v1alpha1"
 	"code-code.internal/platform-k8s/internal/platform/providerstate"
+	"code-code.internal/platform-k8s/internal/platform/providersurfaces"
 	"code-code.internal/platform-k8s/internal/platform/resourcemeta"
 	"google.golang.org/protobuf/proto"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -152,16 +154,17 @@ func parseTemplateAsset(asset TemplateAsset) (manifestTemplate, error) {
 			return manifestTemplate{}, err
 		}
 	}
-	if item.provider == nil || item.provider.GetSurfaceId() == "" || item.provider.GetRuntime() == nil {
+	if item.provider == nil || item.provider.GetSurfaceId() == "" {
 		return manifestTemplate{}, fmt.Errorf("platformk8s: template %q is missing provider resource", asset.ID)
 	}
-	defaultModels := surfaceModelIDs(item.provider.GetRuntime())
+	defaultModels := providerModelIDs(item.provider.GetModels())
+	endpoint, _ := templateEndpoint(item.provider.GetSurfaceId())
 	item.view = &managementv1.TemplateView{
 		TemplateId:         asset.ID,
 		DisplayName:        humanizeTemplateID(asset.ID),
 		Vendor:             humanizeToken(strings.Split(asset.ID, "-")[0]),
-		Protocol:           providerv1.RuntimeProtocol(item.provider.GetRuntime()).String(),
-		DefaultBaseUrl:     providerv1.RuntimeBaseURL(item.provider.GetRuntime()),
+		Protocol:           endpoint.GetProtocol().String(),
+		DefaultBaseUrl:     strings.TrimSpace(endpoint.GetBaseUrl()),
 		DefaultModels:      defaultModels,
 		RequiresCredential: item.provider.GetProviderCredentialRef() != nil || manifestContainsCredentialDefinition(documents),
 	}
@@ -225,7 +228,7 @@ func buildTemplateProvider(item manifestTemplate, request *managementv1.ApplyTem
 	provider := proto.Clone(item.provider).(*providerv1.Provider)
 	provider.ProviderId = request.GetProviderId()
 	provider.DisplayName = request.GetDisplayName()
-	if provider.GetSurfaceId() == "" || provider.GetRuntime() == nil {
+	if provider.GetSurfaceId() == "" {
 		return nil, domainerror.NewValidation("platformk8s: template %q is missing provider surface", item.view.GetTemplateId())
 	}
 	if request.GetProviderCredentialId() != "" {
@@ -233,17 +236,11 @@ func buildTemplateProvider(item manifestTemplate, request *managementv1.ApplyTem
 	} else {
 		provider.ProviderCredentialRef = nil
 	}
-	if provider.Runtime.Catalog == nil {
-		provider.Runtime.Catalog = &providerv1.ProviderModelCatalog{}
-	}
-	provider.Runtime.Catalog.Models = make([]*providerv1.ProviderModelCatalogEntry, 0, len(allowedModelIDs))
+	provider.Models = make([]*providerv1.ProviderModel, 0, len(allowedModelIDs))
 	for _, modelID := range allowedModelIDs {
-		provider.Runtime.Catalog.Models = append(provider.Runtime.Catalog.Models, &providerv1.ProviderModelCatalogEntry{
+		provider.Models = append(provider.Models, &providerv1.ProviderModel{
 			ProviderModelId: modelID,
 		})
-	}
-	if provider.Runtime.Catalog.Source == providerv1.CatalogSource_CATALOG_SOURCE_UNSPECIFIED {
-		provider.Runtime.Catalog.Source = providerv1.CatalogSource_CATALOG_SOURCE_FALLBACK_CONFIG
 	}
 	if err := providerv1.ValidateProvider(provider); err != nil {
 		return nil, domainerror.NewValidation("platformk8s: invalid provider from template %q: %v", item.view.GetTemplateId(), err)
@@ -266,11 +263,7 @@ func cloneTemplateView(view *managementv1.TemplateView) *managementv1.TemplateVi
 	}
 }
 
-func surfaceModelIDs(surface *providerv1.ProviderSurfaceRuntime) []string {
-	if surface == nil || surface.GetCatalog() == nil {
-		return nil
-	}
-	models := surface.GetCatalog().GetModels()
+func providerModelIDs(models []*providerv1.ProviderModel) []string {
 	out := make([]string, 0, len(models))
 	for _, model := range models {
 		if model == nil || model.GetProviderModelId() == "" {
@@ -279,6 +272,24 @@ func surfaceModelIDs(surface *providerv1.ProviderSurfaceRuntime) []string {
 		out = append(out, model.GetProviderModelId())
 	}
 	return out
+}
+
+func templateEndpoint(surfaceID string) (*supportv1.ApiEndpoint, bool) {
+	service, err := providersurfaces.NewService()
+	if err != nil {
+		return nil, false
+	}
+	surface, err := service.Get(context.Background(), surfaceID)
+	if err != nil {
+		return nil, false
+	}
+	for _, endpoint := range surface.GetApi().GetApiEndpoints() {
+		if endpoint == nil || strings.TrimSpace(endpoint.GetBaseUrl()) == "" {
+			continue
+		}
+		return endpoint, true
+	}
+	return nil, false
 }
 
 func dedupeModelIDs(modelIDs []string) ([]string, error) {

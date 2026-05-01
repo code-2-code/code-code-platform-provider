@@ -10,6 +10,7 @@ import (
 	providercontract "code-code.internal/agent-runtime-contract/provider"
 	apiprotocolv1 "code-code.internal/go-contract/api_protocol/v1"
 	credentialv1 "code-code.internal/go-contract/credential/v1"
+	supportv1 "code-code.internal/go-contract/platform/support/v1"
 	providerv1 "code-code.internal/go-contract/provider/v1"
 	"code-code.internal/platform-k8s/internal/providerservice/providers/protocolruntime"
 )
@@ -29,19 +30,17 @@ func NewProvider() *Provider {
 
 // Surface returns the stable provider surface metadata.
 func (p *Provider) Surface() *providercontract.ProviderSurface {
-	return &providerv1.ProviderSurface{
-		SurfaceId:                surfaceID,
-		DisplayName:              "Anthropic",
-		SupportedCredentialKinds: []credentialv1.CredentialKind{credentialv1.CredentialKind_CREDENTIAL_KIND_API_KEY},
-		Kind:                     providerv1.ProviderSurfaceKind_PROVIDER_SURFACE_KIND_API,
-		Spec: &providerv1.ProviderSurface_Api{
-			Api: &providerv1.ProviderSurfaceAPISpec{
-				SupportedProtocols: []apiprotocolv1.Protocol{apiprotocolv1.Protocol_PROTOCOL_ANTHROPIC},
-			},
+	return &supportv1.Surface{
+		SurfaceId:     surfaceID,
+		ProductInfoId: "anthropic",
+		Spec: &supportv1.Surface_Api{
+			Api: &supportv1.ApiSurface{ApiEndpoints: []*supportv1.ApiEndpoint{{
+				Protocol: apiprotocolv1.Protocol_PROTOCOL_ANTHROPIC,
+			}}},
 		},
-		Capabilities: &providerv1.ProviderCapabilities{
-			SupportsModelOverride: true,
-		},
+		AuthPolicyId:        "vendor.anthropic",
+		EgressPolicyId:      "vendor.anthropic",
+		ModelCatalogProbeId: "surface.anthropic",
 	}
 }
 
@@ -50,16 +49,8 @@ func (p *Provider) NewRuntime(provider *providerv1.Provider, credential *credent
 	if provider == nil {
 		return nil, fmt.Errorf("platformk8s/anthropic: provider is nil")
 	}
-	runtime := provider.GetRuntime()
-	if runtime == nil {
-		return nil, fmt.Errorf("platformk8s/anthropic: provider surface runtime is required")
-	}
-	api := runtime.GetApi()
-	if api.GetProtocol() != apiprotocolv1.Protocol_PROTOCOL_ANTHROPIC {
-		return nil, fmt.Errorf("platformk8s/anthropic: unsupported protocol %s", api.GetProtocol().String())
-	}
-	if api.GetBaseUrl() == "" {
-		return nil, fmt.Errorf("platformk8s/anthropic: base_url is required")
+	if provider.GetSurfaceId() != surfaceID {
+		return nil, fmt.Errorf("platformk8s/anthropic: unsupported surface %q", provider.GetSurfaceId())
 	}
 	if credential == nil || credential.Kind != credentialv1.CredentialKind_CREDENTIAL_KIND_API_KEY || credential.GetApiKey() == nil {
 		return nil, fmt.Errorf("platformk8s/anthropic: api key credential is required")

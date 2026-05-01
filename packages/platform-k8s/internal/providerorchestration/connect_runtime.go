@@ -10,32 +10,25 @@ import (
 	authv1 "code-code.internal/go-contract/platform/auth/v1"
 	managementv1 "code-code.internal/go-contract/platform/management/v1"
 	oauthv1 "code-code.internal/go-contract/platform/oauth/v1"
+	providerservicev1 "code-code.internal/go-contract/platform/provider/v1"
 
 	providerv1 "code-code.internal/go-contract/provider/v1"
 	clisupport "code-code.internal/platform-k8s/internal/platform/clidefinitions/support"
 	"code-code.internal/platform-k8s/internal/platform/providersurfaces"
-	vendorsupport "code-code.internal/platform-k8s/internal/platform/vendors/support"
 	"code-code.internal/platform-k8s/internal/providerconnect"
-	"code-code.internal/platform-k8s/internal/providerpostconnect"
 	"code-code.internal/platform-k8s/internal/providerservice/providers"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"go.temporal.io/sdk/client"
-	"google.golang.org/protobuf/proto"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type ConnectRuntimeConfig struct {
-	Client                  ctrlclient.Client
-	Reader                  ctrlclient.Reader
-	Namespace               string
-	StatePool               *pgxpool.Pool
-	Auth                    authv1.AuthServiceClient
-	OAuth                   oauthv1.OAuthSessionServiceClient
-	TemporalClient          client.Client
-	PostConnectTaskQueue    string
-	ProviderHTTPBaseURL     string
-	ProviderHTTPActionToken string
-	Logger                  *slog.Logger
+	Client    ctrlclient.Client
+	Reader    ctrlclient.Reader
+	Namespace string
+	StatePool *pgxpool.Pool
+	Auth      authv1.AuthServiceClient
+	OAuth     oauthv1.OAuthSessionServiceClient
+	Logger    *slog.Logger
 }
 
 func NewProviderConnectRuntime(config ConnectRuntimeConfig) (*providerconnect.Service, error) {
@@ -57,14 +50,7 @@ func NewProviderConnectRuntime(config ConnectRuntimeConfig) (*providerconnect.Se
 	if config.OAuth == nil {
 		return nil, fmt.Errorf("platformk8s/providerorchestration: oauth client is nil")
 	}
-	if config.TemporalClient == nil {
-		return nil, fmt.Errorf("platformk8s/providerorchestration: temporal client is nil")
-	}
 	surfaceMetadata, err := providersurfaces.NewService()
-	if err != nil {
-		return nil, err
-	}
-	vendorSupport, err := vendorsupport.NewManagementService()
 	if err != nil {
 		return nil, err
 	}
@@ -79,16 +65,6 @@ func NewProviderConnectRuntime(config ConnectRuntimeConfig) (*providerconnect.Se
 	if err != nil {
 		return nil, err
 	}
-	postConnect, err := providerpostconnect.NewTemporalWorkflowRuntime(providerpostconnect.TemporalWorkflowRuntimeConfig{
-		Client:                  config.TemporalClient,
-		TaskQueue:               config.PostConnectTaskQueue,
-		PlatformNamespace:       config.Namespace,
-		ProviderHTTPBaseURL:     config.ProviderHTTPBaseURL,
-		ProviderHTTPActionToken: config.ProviderHTTPActionToken,
-	})
-	if err != nil {
-		return nil, err
-	}
 	return providerconnect.NewService(providerconnect.Config{
 		Client:         config.Client,
 		Reader:         config.Reader,
@@ -96,9 +72,7 @@ func NewProviderConnectRuntime(config ConnectRuntimeConfig) (*providerconnect.Se
 		Providers:      orchestrationProviderAdapter{source: providerAccounts},
 		ProviderReader: orchestrationProviderAdapter{source: providerAccounts},
 		Surfaces:       surfaceMetadata,
-		VendorSupport:  vendorSupport,
 		CLISupport:     cliSupport,
-		PostConnect:    postConnect,
 		OAuthSessions:  orchestrationOAuthSessionService{client: config.OAuth},
 		Logger:         config.Logger,
 	})
@@ -184,10 +158,29 @@ func providerConnectProviderFromManagement(view *managementv1.ProviderView) *pro
 		DisplayName:          strings.TrimSpace(view.GetDisplayName()),
 		SurfaceID:            strings.TrimSpace(view.GetSurfaceId()),
 		ProviderCredentialID: strings.TrimSpace(view.GetProviderCredentialId()),
-		ProductInfoID:        strings.TrimSpace(view.GetProductInfoId()),
-	}
-	if runtime := view.GetRuntime(); runtime != nil {
-		out.Runtime = proto.Clone(runtime).(*providerv1.ProviderSurfaceRuntime)
+		Endpoints:            cloneProviderEndpoints(view.GetEndpoints()),
+		Models:               cloneProviderModels(view.GetModels()),
+		Status: &providerconnect.ProviderStatusView{
+			Phase:  providerConnectProviderPhaseFromManagement(view.GetStatus().GetPhase()),
+			Reason: strings.TrimSpace(view.GetStatus().GetReason()),
+		},
 	}
 	return out
+}
+
+func providerConnectProviderPhaseFromManagement(value providerservicev1.ProviderPhase) providerconnect.ProviderPhase {
+	switch value {
+	case providerservicev1.ProviderPhase_PROVIDER_PHASE_READY:
+		return providerconnect.ProviderPhaseReady
+	case providerservicev1.ProviderPhase_PROVIDER_PHASE_INVALID_CONFIG:
+		return providerconnect.ProviderPhaseInvalidConfig
+	case providerservicev1.ProviderPhase_PROVIDER_PHASE_REFRESHING:
+		return providerconnect.ProviderPhaseRefreshing
+	case providerservicev1.ProviderPhase_PROVIDER_PHASE_STALE:
+		return providerconnect.ProviderPhaseStale
+	case providerservicev1.ProviderPhase_PROVIDER_PHASE_ERROR:
+		return providerconnect.ProviderPhaseError
+	default:
+		return providerconnect.ProviderPhaseUnspecified
+	}
 }

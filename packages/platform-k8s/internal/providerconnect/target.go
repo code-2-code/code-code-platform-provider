@@ -9,20 +9,20 @@ import (
 )
 
 type connectTarget struct {
-	AddMethod          AddMethod
-	DisplayName        string
-	VendorID           string
-	CLIID              string
-	SurfaceID          string
-	TargetCredentialID string
-	TargetProviderID   string
-	RuntimeTemplate    *providerv1.ProviderSurfaceRuntime
+	AddMethod           AddMethod
+	DisplayName         string
+	CLIID               string
+	SurfaceID           string
+	TargetCredentialID  string
+	TargetProviderID    string
+	Models              []*providerv1.ProviderModel
+	CustomAPIKeySurface *providerv1.CustomAPIKeySurface
 }
 
 func newConnectTarget(
 	addMethod AddMethod,
-	displayName, vendorID, cliID, surfaceID string,
-	runtime *providerv1.ProviderSurfaceRuntime,
+	displayName, cliID, surfaceID string,
+	models []*providerv1.ProviderModel,
 	suffix string,
 ) (*connectTarget, error) {
 	targetCredentialID, err := resourcemeta.EnsureResourceID("", displayName, suffix)
@@ -36,29 +36,27 @@ func newConnectTarget(
 	return newConnectTargetWithIDs(
 		addMethod,
 		displayName,
-		vendorID,
 		cliID,
 		surfaceID,
 		targetCredentialID,
 		targetProviderID,
-		runtime,
+		models,
 	), nil
 }
 
 func newConnectTargetWithIDs(
 	addMethod AddMethod,
-	displayName, vendorID, cliID, surfaceID, targetCredentialID, targetProviderID string,
-	runtime *providerv1.ProviderSurfaceRuntime,
+	displayName, cliID, surfaceID, targetCredentialID, targetProviderID string,
+	models []*providerv1.ProviderModel,
 ) *connectTarget {
 	return &connectTarget{
 		AddMethod:          addMethod,
 		DisplayName:        strings.TrimSpace(displayName),
-		VendorID:           strings.TrimSpace(vendorID),
 		CLIID:              strings.TrimSpace(cliID),
 		SurfaceID:          strings.TrimSpace(surfaceID),
 		TargetCredentialID: strings.TrimSpace(targetCredentialID),
 		TargetProviderID:   strings.TrimSpace(targetProviderID),
-		RuntimeTemplate:    cloneProviderSurfaceRuntime(runtime),
+		Models:             cloneProviderModels(models),
 	}
 }
 
@@ -66,16 +64,17 @@ func (t *connectTarget) WithSharedIdentity(targetCredentialID, targetProviderID 
 	if t == nil {
 		return &connectTarget{}
 	}
-	return newConnectTargetWithIDs(
+	next := newConnectTargetWithIDs(
 		t.AddMethod,
 		t.DisplayName,
-		t.VendorID,
 		t.CLIID,
 		t.SurfaceID,
 		targetCredentialID,
 		targetProviderID,
-		t.RuntimeTemplate,
+		t.Models,
 	)
+	next.CustomAPIKeySurface = cloneCustomAPIKeySurface(t.CustomAPIKeySurface)
+	return next
 }
 
 func (t *connectTarget) OAuthSessionSpec(flow credentialv1.OAuthAuthorizationFlow) *credentialv1.OAuthAuthorizationSessionSpec {
@@ -90,24 +89,28 @@ func (t *connectTarget) OAuthSessionSpec(flow credentialv1.OAuthAuthorizationFlo
 	}
 }
 
-func (t *connectTarget) callableRuntime() *providerv1.ProviderSurfaceRuntime {
-	if t == nil {
-		return nil
-	}
-	return cloneProviderSurfaceRuntime(t.RuntimeTemplate)
-}
-
 func (t *connectTarget) Provider(credentialID string) *providerv1.Provider {
 	provider := &providerv1.Provider{
 		ProviderId:  strings.TrimSpace(t.TargetProviderID),
 		DisplayName: strings.TrimSpace(t.DisplayName),
 		SurfaceId:   strings.TrimSpace(t.SurfaceID),
-		Runtime:     t.callableRuntime(),
+		Models:      cloneProviderModels(t.Models),
 	}
 	if cid := strings.TrimSpace(credentialID); cid != "" {
 		provider.ProviderCredentialRef = &providerv1.ProviderCredentialRef{ProviderCredentialId: cid}
 	}
+	if t.CustomAPIKeySurface != nil {
+		provider.CustomApiKeySurface = cloneCustomAPIKeySurface(t.CustomAPIKeySurface)
+	}
 	return provider
 }
 
-
+func cloneCustomAPIKeySurface(surface *providerv1.CustomAPIKeySurface) *providerv1.CustomAPIKeySurface {
+	if surface == nil {
+		return nil
+	}
+	return &providerv1.CustomAPIKeySurface{
+		BaseUrl:  strings.TrimSpace(surface.GetBaseUrl()),
+		Protocol: surface.GetProtocol(),
+	}
+}

@@ -6,14 +6,12 @@ import (
 	"context"
 
 	credentialcontract "code-code.internal/agent-runtime-contract/credential"
+	supportv1 "code-code.internal/go-contract/platform/support/v1"
 	providerv1 "code-code.internal/go-contract/provider/v1"
 )
 
 // ProviderSurface describes one stable provider capability surface.
-type ProviderSurface = providerv1.ProviderSurface
-
-// ProviderModelCatalog describes the models currently available through one surface.
-type ProviderModelCatalog = providerv1.ProviderModelCatalog
+type ProviderSurface = supportv1.Surface
 
 // ResolvedProviderModel describes the final provider-routed model selected for
 // one call.
@@ -35,8 +33,8 @@ type ProviderRuntime interface {
 	// HealthCheck reports whether the runtime is still healthy enough to serve requests.
 	HealthCheck(ctx context.Context) error
 
-	// ListModels returns the current model catalog for the bound surface.
-	ListModels(ctx context.Context) (*ProviderModelCatalog, error)
+	// ListModels returns the current provider-callable models for the bound surface.
+	ListModels(ctx context.Context) ([]*providerv1.ProviderModel, error)
 
 	// Close releases runtime-owned resources.
 	Close(ctx context.Context) error

@@ -21,7 +21,6 @@ import (
 	"code-code.internal/platform-k8s/internal/platform/telemetry"
 	"code-code.internal/platform-k8s/internal/platform/temporalruntime"
 	"code-code.internal/platform-k8s/internal/providerorchestration"
-	"code-code.internal/platform-k8s/internal/providerpostconnect"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -40,8 +39,6 @@ func main() {
 	authAddr := envOrDefault("PLATFORM_PROVIDER_ORCHESTRATION_SERVICE_AUTH_GRPC_ADDR", "platform-auth-service:8081")
 	providerAddr := envOrDefault("PLATFORM_PROVIDER_ORCHESTRATION_SERVICE_PROVIDER_GRPC_ADDR", "platform-provider-service:8081")
 	databaseURL := firstEnv("PLATFORM_DATABASE_URL", "PLATFORM_PROVIDER_ORCHESTRATION_SERVICE_DATABASE_URL")
-	internalActionToken := strings.TrimSpace(os.Getenv("PLATFORM_PROVIDER_ORCHESTRATION_SERVICE_INTERNAL_ACTION_TOKEN"))
-	providerHTTPBaseURL := envOrDefault("PLATFORM_PROVIDER_ORCHESTRATION_SERVICE_PROVIDER_HTTP_BASE_URL", "")
 
 	telemetryShutdown, err := telemetry.Setup(context.Background(), envOrDefault("OTEL_SERVICE_NAME", "platform-provider-orchestration-service"))
 	must(err)
@@ -75,17 +72,13 @@ func main() {
 	must(err)
 	defer temporalClient.Close()
 	providerConnect, err := providerorchestration.NewProviderConnectRuntime(providerorchestration.ConnectRuntimeConfig{
-		Client:                  kubeClient,
-		Reader:                  kubeClient,
-		Namespace:               namespace,
-		StatePool:               statePool,
-		Auth:                    authv1.NewAuthServiceClient(authConn),
-		OAuth:                   oauthv1.NewOAuthSessionServiceClient(authConn),
-		TemporalClient:          temporalClient,
-		PostConnectTaskQueue:    providerpostconnect.TemporalTaskQueue,
-		ProviderHTTPBaseURL:     providerHTTPBaseURL,
-		ProviderHTTPActionToken: internalActionToken,
-		Logger:                  slog.Default(),
+		Client:    kubeClient,
+		Reader:    kubeClient,
+		Namespace: namespace,
+		StatePool: statePool,
+		Auth:      authv1.NewAuthServiceClient(authConn),
+		OAuth:     oauthv1.NewOAuthSessionServiceClient(authConn),
+		Logger:    slog.Default(),
 	})
 	must(err)
 
@@ -100,6 +93,7 @@ func main() {
 	must(err)
 	temporalWorker := temporalruntime.NewWorker(temporalClient, temporalConfig.TaskQueue)
 	must(providerorchestration.RegisterTemporalWorkflows(temporalWorker, server))
+	must(providerorchestration.EnsureTemporalSchedules(context.Background(), temporalClient, temporalConfig.TaskQueue))
 	must(temporalWorker.Start())
 	defer temporalWorker.Stop()
 

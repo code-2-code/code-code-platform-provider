@@ -83,18 +83,17 @@ func googleAIStudioQuotaWindow(code int) string {
 
 func googleAIStudioQuotaType(resourceCode, windowCode int) string {
 	resource := googleAIStudioQuotaResource(resourceCode)
-	window := googleAIStudioQuotaWindow(windowCode)
-	switch {
-	case resource == "requests" && window == "minute":
-		return "RPM"
-	case resource == "requests" && window == "day":
-		return "RPD"
-	case resource == "tokens" && window == "minute":
-		return "TPM"
-	case resource == "tokens" && window == "day":
-		return "TPD"
+	switch resource {
+	case "requests":
+		return "Requests"
+	case "tokens":
+		return "Tokens"
+	case "images":
+		return "Images"
+	case "videos":
+		return "Videos"
 	default:
-		return ""
+		return "Limit"
 	}
 }
 

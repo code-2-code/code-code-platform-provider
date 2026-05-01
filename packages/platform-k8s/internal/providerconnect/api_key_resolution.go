@@ -2,24 +2,19 @@ package providerconnect
 
 import (
 	"context"
-	"strings"
 
 	credentialv1 "code-code.internal/go-contract/credential/v1"
 	"code-code.internal/go-contract/domainerror"
-	supportv1 "code-code.internal/go-contract/platform/support/v1"
+	providerv1 "code-code.internal/go-contract/provider/v1"
+	"code-code.internal/platform-k8s/internal/platform/providersurfaces"
 )
 
 type apiKeyResolvedConnect struct {
 	target *connectTarget
-	plan   *connectPlan
 }
 
-func newCustomAPIKeyResolvedConnect(target *connectTarget) *apiKeyResolvedConnect {
+func newAPIKeyResolvedConnect(target *connectTarget) *apiKeyResolvedConnect {
 	return &apiKeyResolvedConnect{target: target}
-}
-
-func newVendorAPIKeyResolvedConnect(plan *connectPlan) *apiKeyResolvedConnect {
-	return &apiKeyResolvedConnect{plan: plan}
 }
 
 func (r *apiKeyResolvedConnect) Execute(
@@ -30,8 +25,6 @@ func (r *apiKeyResolvedConnect) Execute(
 	switch {
 	case r == nil:
 		return nil, domainerror.NewValidation("platformk8s/providerconnect: api key connect target is required")
-	case r.plan != nil:
-		return newVendorAPIKeyConnectExecution(r.plan, apiKey).Execute(ctx, runtime)
 	case r.target != nil:
 		return newCustomAPIKeyConnectExecution(r.target, apiKey).Execute(ctx, runtime)
 	default:
@@ -58,10 +51,13 @@ func (r providerConnectAPIKeyResolutionRuntime) Resolve(
 	ctx context.Context,
 	command *ConnectCommand,
 ) (*apiKeyResolvedConnect, error) {
-	if command.IsVendorAPIKey() {
-		return r.ResolveVendor(ctx, command)
+	if command.IsCustomAPIKey() {
+		return r.ResolveCustom(ctx, command)
 	}
-	return r.ResolveCustom(ctx, command)
+	if command.IsSurfaceAPIKey() {
+		return r.ResolveSurface(ctx, command)
+	}
+	return nil, domainerror.NewValidation("platformk8s/providerconnect: surface_id is required for API key connect")
 }
 
 func (r providerConnectAPIKeyResolutionRuntime) ResolveCustom(
@@ -69,120 +65,81 @@ func (r providerConnectAPIKeyResolutionRuntime) ResolveCustom(
 	command *ConnectCommand,
 ) (*apiKeyResolvedConnect, error) {
 	displayName := command.DisplayNameOr("Custom API Key")
-	catalogs, err := newSurfaceCatalogSet(command.SurfaceModelCatalogs())
+	surfaceModels, err := newSurfaceModelSet(command.SurfaceModels())
 	if err != nil {
 		return nil, err
 	}
-	candidate, err := newCustomAPIKeyCandidate(displayName, command.APIKeyInput(), catalogs)
+	candidate, err := newCustomAPIKeyCandidate(displayName, command.APIKeyInput(), surfaceModels)
 	if err != nil {
 		return nil, err
 	}
-	definition, err := r.queries.LoadSurfaceMetadata(ctx, candidate.SurfaceID())
+	if err := surfaceModels.ValidateAllMatched(); err != nil {
+		return nil, err
+	}
+	target, err := candidate.APIKeyTarget(displayName)
 	if err != nil {
 		return nil, err
 	}
-	if err := definition.ValidateCandidate(candidate, credentialv1.CredentialKind_CREDENTIAL_KIND_API_KEY); err != nil {
-		return nil, err
-	}
-	target, err := candidate.CustomAPIKeyTarget(displayName)
-	if err != nil {
-		return nil, err
-	}
-	return newCustomAPIKeyResolvedConnect(target), nil
+	return newAPIKeyResolvedConnect(target), nil
 }
 
-func (r providerConnectAPIKeyResolutionRuntime) ResolveVendor(
+func (r providerConnectAPIKeyResolutionRuntime) ResolveSurface(
 	ctx context.Context,
 	command *ConnectCommand,
 ) (*apiKeyResolvedConnect, error) {
-	vendorID := command.VendorID()
-	if vendorID == "" {
-		return nil, domainerror.NewValidation("platformk8s/providerconnect: vendor_id is required for vendor API key connect")
-	}
-	vendor, err := r.loadVendorSupport(ctx, vendorID)
+	displayName := command.DisplayNameOr(command.SurfaceID())
+	surfaceModels, err := newSurfaceModelSet(command.SurfaceModels())
 	if err != nil {
 		return nil, err
 	}
-	displayName := vendor.DisplayNameOr(command.DisplayName())
-	catalogs, err := newSurfaceCatalogSet(command.SurfaceModelCatalogs())
+	surface, err := r.queries.LoadSurfaceMetadata(ctx, command.SurfaceID())
 	if err != nil {
 		return nil, err
 	}
-	candidates, err := vendor.Candidates(catalogs)
+	endpoints := providersurfaces.Endpoints(surface.value)
+	if len(endpoints) == 0 {
+		return nil, domainerror.NewValidation("platformk8s/providerconnect: provider surface %q does not expose an API endpoint", command.SurfaceID())
+	}
+	baseURL, usesCustomBaseURL, err := resolveSurfaceAPIKeyBaseURL(endpoints[0].GetApi().GetBaseUrl(), command.APIKeyInput().BaseURL)
 	if err != nil {
 		return nil, err
 	}
-	targets := make([]*connectTarget, 0, len(candidates))
-	for _, candidate := range candidates {
-		definition, err := r.queries.LoadSurfaceMetadata(ctx, candidate.SurfaceID())
-		if err != nil {
+	endpoint := endpoints[0]
+	if usesCustomBaseURL {
+		endpoint = &providerv1.ProviderEndpoint{
+			Type: providerv1.ProviderEndpointType_PROVIDER_ENDPOINT_TYPE_API,
+			Shape: &providerv1.ProviderEndpoint_Api{Api: &providerv1.ProviderApiEndpoint{
+				Protocol: endpoints[0].GetApi().GetProtocol(),
+				BaseUrl:  baseURL,
+			}},
+		}
+	}
+	candidate, err := newConnectProviderCandidate(
+		surface.SurfaceID(),
+		endpoint,
+		surfaceModels.Models(surface.SurfaceID(), nil),
+		"platformk8s/providerconnect: invalid provider surface",
+	)
+	if err != nil {
+		return nil, err
+	}
+	if usesCustomBaseURL {
+		candidate.customAPIKeySurface = &providerv1.CustomAPIKeySurface{
+			BaseUrl:  baseURL,
+			Protocol: candidate.Endpoint().GetApi().GetProtocol(),
+		}
+	}
+	if !usesCustomBaseURL {
+		if err := surface.ValidateCandidate(candidate, credentialv1.CredentialKind_CREDENTIAL_KIND_API_KEY); err != nil {
 			return nil, err
 		}
-		if err := definition.ValidateCandidate(candidate, credentialv1.CredentialKind_CREDENTIAL_KIND_API_KEY); err != nil {
-			return nil, err
-		}
-		target, err := candidate.VendorAPIKeyTarget(displayName, vendor.VendorID())
-		if err != nil {
-			return nil, err
-		}
-		targets = append(targets, target)
 	}
-	plan, err := newConnectPlan(displayName, vendor.VendorID(), targets)
+	if err := surfaceModels.ValidateAllMatched(); err != nil {
+		return nil, err
+	}
+	target, err := candidate.APIKeyTarget(displayName)
 	if err != nil {
 		return nil, err
 	}
-	return newVendorAPIKeyResolvedConnect(plan), nil
-}
-
-func (r providerConnectAPIKeyResolutionRuntime) loadVendorSupport(
-	ctx context.Context,
-	vendorID string,
-) (*vendorAPIKeySupport, error) {
-	if r.support.vendors == nil {
-		return nil, domainerror.NewValidation("platformk8s/providerconnect: vendor support reader is nil")
-	}
-	vendor, err := r.support.vendors.GetForConnect(ctx, vendorID)
-	if err != nil {
-		return nil, domainerror.NewNotFound("platformk8s/providerconnect: vendor support %q not found", vendorID)
-	}
-	return newVendorAPIKeySupport(vendorID, vendor), nil
-}
-
-type vendorAPIKeySupport struct {
-	vendorID string
-	value    *supportv1.Vendor
-}
-
-func newVendorAPIKeySupport(vendorID string, value *supportv1.Vendor) *vendorAPIKeySupport {
-	return &vendorAPIKeySupport{
-		vendorID: strings.TrimSpace(vendorID),
-		value:    value,
-	}
-}
-
-func (p *vendorAPIKeySupport) DisplayNameOr(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	if p != nil && p.value != nil && p.value.GetVendor() != nil {
-		if displayName := strings.TrimSpace(p.value.GetVendor().GetDisplayName()); displayName != "" {
-			return displayName
-		}
-	}
-	return p.VendorID()
-}
-
-func (p *vendorAPIKeySupport) VendorID() string {
-	if p == nil {
-		return ""
-	}
-	return strings.TrimSpace(p.vendorID)
-}
-
-func (p *vendorAPIKeySupport) Candidates(
-	catalogs *surfaceCatalogSet,
-) ([]*connectProviderCandidate, error) {
-	return newVendorAPIKeyCandidates(p.value, catalogs)
+	return newAPIKeyResolvedConnect(target), nil
 }

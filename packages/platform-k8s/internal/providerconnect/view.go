@@ -11,7 +11,6 @@ type SessionView struct {
 	Message          string
 	ErrorMessage     string
 	AddMethod        AddMethod
-	VendorID         string
 	CLIID            string
 	Provider         *ProviderView
 }
@@ -77,13 +76,6 @@ func (v *SessionView) GetAddMethod() AddMethod {
 		return AddMethodUnspecified
 	}
 	return v.AddMethod
-}
-
-func (v *SessionView) GetVendorId() string {
-	if v == nil {
-		return ""
-	}
-	return v.VendorID
 }
 
 func (v *SessionView) GetCliId() string {

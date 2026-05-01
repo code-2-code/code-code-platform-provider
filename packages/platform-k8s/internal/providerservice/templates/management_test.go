@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	apiprotocolv1 "code-code.internal/go-contract/api_protocol/v1"
 	"code-code.internal/go-contract/domainerror"
 	managementv1 "code-code.internal/go-contract/platform/management/v1"
 	providerv1 "code-code.internal/go-contract/provider/v1"
@@ -49,23 +48,10 @@ func TestBuildTemplateInstanceAppliesOverrides(t *testing.T) {
 			TemplateId: "vendor-protocol",
 		},
 		provider: &providerv1.Provider{
-			ProviderId:  "provider-account-template",
-			DisplayName: "Vendor Protocol",
-			SurfaceId:   "vendor-protocol",
-			Runtime: &providerv1.ProviderSurfaceRuntime{
-				DisplayName: "vendor-protocol",
-				Origin:      providerv1.ProviderSurfaceOrigin_PROVIDER_SURFACE_ORIGIN_DERIVED,
-				Access: &providerv1.ProviderSurfaceRuntime_Api{
-					Api: &providerv1.ProviderAPISurfaceRuntime{
-						Protocol: apiprotocolv1.Protocol_PROTOCOL_OPENAI_COMPATIBLE,
-						BaseUrl:  "https://api.example.com/v1",
-					},
-				},
-				Catalog: &providerv1.ProviderModelCatalog{
-					Source: providerv1.CatalogSource_CATALOG_SOURCE_FALLBACK_CONFIG,
-					Models: []*providerv1.ProviderModelCatalogEntry{{ProviderModelId: "model-a"}},
-				},
-			},
+			ProviderId:            "provider-account-template",
+			DisplayName:           "Vendor Protocol",
+			SurfaceId:             "vendor-protocol",
+			Models:                []*providerv1.ProviderModel{{ProviderModelId: "model-a"}},
 			ProviderCredentialRef: &providerv1.ProviderCredentialRef{ProviderCredentialId: "existing"},
 		},
 	}
@@ -85,8 +71,8 @@ func TestBuildTemplateInstanceAppliesOverrides(t *testing.T) {
 	if provider.GetProviderCredentialRef() != nil {
 		t.Fatalf("ProviderCredentialRef = %#v, want nil when request omits provider credential", provider.GetProviderCredentialRef())
 	}
-	if got := len(provider.GetRuntime().GetCatalog().GetModels()); got != 2 {
-		t.Fatalf("Catalog.Models len = %d, want 2", got)
+	if got := len(provider.GetModels()); got != 2 {
+		t.Fatalf("Models len = %d, want 2", got)
 	}
 }
 

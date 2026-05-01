@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	credentialv1 "code-code.internal/go-contract/credential/v1"
-	providerv1 "code-code.internal/go-contract/provider/v1"
 )
 
 type sessionRecord struct {
@@ -32,12 +31,12 @@ func (r *sessionRecord) needsFinalize() bool {
 	return r != nil && r.sessionTargetSnapshot.needsFinalize(r.ConnectedSurfaceID)
 }
 
-func (r *sessionRecord) target(runtime *providerv1.ProviderSurfaceRuntime) *connectTarget {
-	return r.sessionTargetSnapshot.target(runtime)
-}
-
-func (r *sessionRecord) runtime() (*providerv1.ProviderSurfaceRuntime, error) {
-	return r.sessionTargetSnapshot.runtime()
+func (r *sessionRecord) target() (*connectTarget, error) {
+	models, err := r.sessionTargetSnapshot.models()
+	if err != nil {
+		return nil, err
+	}
+	return r.sessionTargetSnapshot.target(models), nil
 }
 
 func (r *sessionRecord) view(provider *ProviderView, oauthState *credentialv1.OAuthAuthorizationSessionState) *SessionView {
@@ -51,7 +50,6 @@ func (r *sessionRecord) view(provider *ProviderView, oauthState *credentialv1.OA
 		Message:          r.Message,
 		ErrorMessage:     r.ErrorMessage,
 		AddMethod:        r.AddMethod,
-		VendorID:         r.VendorID,
 		CLIID:            r.CLIID,
 		Provider:         provider,
 	}

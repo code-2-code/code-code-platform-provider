@@ -12,23 +12,23 @@ import (
 type ConnectCommandInput struct {
 	AddMethod   AddMethod
 	DisplayName string
-	VendorID    string
 	CLIID       string
+	SurfaceID   string
 	APIKey      *APIKeyConnectInput
 }
 
 // APIKeyConnectInput carries the pre-created credential reference for API key onboarding.
 type APIKeyConnectInput struct {
-	CredentialID         string
-	BaseURL              string
-	Protocol             apiprotocolv1.Protocol
-	SurfaceModelCatalogs []*ProviderModelCatalogInput
+	CredentialID  string
+	BaseURL       string
+	Protocol      apiprotocolv1.Protocol
+	SurfaceModels []*SurfaceModelInput
 }
 
-// ProviderModelCatalogInput carries one surface catalog override.
-type ProviderModelCatalogInput struct {
+// SurfaceModelInput carries provider models selected for one surface.
+type SurfaceModelInput struct {
 	SurfaceID string
-	Models    []*providerv1.ProviderModelCatalogEntry
+	Models    []*providerv1.ProviderModel
 }
 
 func cloneAPIKeyConnectInput(input *APIKeyConnectInput) *APIKeyConnectInput {
@@ -40,13 +40,13 @@ func cloneAPIKeyConnectInput(input *APIKeyConnectInput) *APIKeyConnectInput {
 		BaseURL:      strings.TrimSpace(input.BaseURL),
 		Protocol:     input.Protocol,
 	}
-	if len(input.SurfaceModelCatalogs) > 0 {
-		out.SurfaceModelCatalogs = make([]*ProviderModelCatalogInput, 0, len(input.SurfaceModelCatalogs))
-		for _, item := range input.SurfaceModelCatalogs {
+	if len(input.SurfaceModels) > 0 {
+		out.SurfaceModels = make([]*SurfaceModelInput, 0, len(input.SurfaceModels))
+		for _, item := range input.SurfaceModels {
 			if item == nil {
 				continue
 			}
-			out.SurfaceModelCatalogs = append(out.SurfaceModelCatalogs, &ProviderModelCatalogInput{
+			out.SurfaceModels = append(out.SurfaceModels, &SurfaceModelInput{
 				SurfaceID: strings.TrimSpace(item.SurfaceID),
 				Models:    cloneProviderModels(item.Models),
 			})
@@ -55,16 +55,16 @@ func cloneAPIKeyConnectInput(input *APIKeyConnectInput) *APIKeyConnectInput {
 	return out
 }
 
-func cloneProviderModels(items []*providerv1.ProviderModelCatalogEntry) []*providerv1.ProviderModelCatalogEntry {
+func cloneProviderModels(items []*providerv1.ProviderModel) []*providerv1.ProviderModel {
 	if len(items) == 0 {
 		return nil
 	}
-	out := make([]*providerv1.ProviderModelCatalogEntry, 0, len(items))
+	out := make([]*providerv1.ProviderModel, 0, len(items))
 	for _, item := range items {
 		if item == nil {
 			continue
 		}
-		out = append(out, proto.Clone(item).(*providerv1.ProviderModelCatalogEntry))
+		out = append(out, proto.Clone(item).(*providerv1.ProviderModel))
 	}
 	return out
 }

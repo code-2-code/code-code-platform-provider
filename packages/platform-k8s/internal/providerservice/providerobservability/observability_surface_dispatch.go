@@ -50,7 +50,6 @@ func findProbeSurface(
 }
 
 // collectDueTargets builds a deduplicated map of providers matching a filter.
-// Shared by both ProbeAllDue implementations.
 func collectDueTargets(
 	ctx context.Context,
 	store providers.Store,

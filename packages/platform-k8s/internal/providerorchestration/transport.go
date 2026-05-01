@@ -2,6 +2,7 @@ package providerorchestration
 
 import (
 	"fmt"
+	"strings"
 
 	managementv1 "code-code.internal/go-contract/platform/management/v1"
 	providerservicev1 "code-code.internal/go-contract/platform/provider/v1"
@@ -27,6 +28,9 @@ func RegisterTemporalWorkflows(worker worker.Worker, server *Server) error {
 	worker.RegisterWorkflowWithOptions(ProviderAPIKeyAuthUpdatedWorkflow, workflow.RegisterOptions{Name: ProviderAPIKeyAuthUpdatedWorkflowName})
 	worker.RegisterWorkflowWithOptions(ProviderObservabilityAuthUpdatedWorkflow, workflow.RegisterOptions{Name: ProviderObservabilityAuthUpdatedWorkflowName})
 	worker.RegisterWorkflowWithOptions(ProviderConnectSessionSyncWorkflow, workflow.RegisterOptions{Name: ProviderConnectSessionSyncWorkflowName})
+	worker.RegisterWorkflowWithOptions(ProviderPostConnectWorkflow, workflow.RegisterOptions{Name: ProviderPostConnectWorkflowName})
+	worker.RegisterWorkflowWithOptions(ProviderQuotaProbeSweepWorkflow, workflow.RegisterOptions{Name: ProviderQuotaProbeSweepWorkflowName})
+	worker.RegisterWorkflowWithOptions(ProviderModelCatalogProbeSweepWorkflow, workflow.RegisterOptions{Name: ProviderModelCatalogProbeSweepWorkflowName})
 	activities := &Activities{auth: server.auth, provider: server.provider, connect: server.connect}
 	worker.RegisterActivityWithOptions(activities.ConnectAPIKeyProvider, activity.RegisterOptions{Name: connectAPIKeyProviderActivityName})
 	worker.RegisterActivityWithOptions(activities.ConnectCLIOAuthProvider, activity.RegisterOptions{Name: connectCLIOAuthProviderActivityName})
@@ -34,6 +38,9 @@ func RegisterTemporalWorkflows(worker worker.Worker, server *Server) error {
 	worker.RegisterActivityWithOptions(activities.GetProvider, activity.RegisterOptions{Name: getProviderActivityName})
 	worker.RegisterActivityWithOptions(activities.DeleteCredential, activity.RegisterOptions{Name: deleteCredentialActivityName})
 	worker.RegisterActivityWithOptions(activities.GetProviderConnectSession, activity.RegisterOptions{Name: getProviderConnectSessionActivityName})
+	worker.RegisterActivityWithOptions(activities.ListProbeProviderIDs, activity.RegisterOptions{Name: listProbeProviderIDsActivityName})
+	worker.RegisterActivityWithOptions(activities.RunQuotaProbeTask, activity.RegisterOptions{Name: runQuotaProbeTaskActivityName})
+	worker.RegisterActivityWithOptions(activities.RunModelCatalogProbeTask, activity.RegisterOptions{Name: runModelCatalogProbeTaskActivityName})
 	return nil
 }
 
@@ -51,35 +58,15 @@ func transcodeProto(src proto.Message, dst proto.Message) error {
 	return nil
 }
 
-func cloneManagementSurfaceCatalogs(items []*managementv1.ProviderSurfaceModelCatalog) []*managementv1.ProviderSurfaceModelCatalog {
-	if len(items) == 0 {
+func providerConnectSurfaceModels(surfaceID string, models []*providerv1.ProviderModel) []*providerconnect.SurfaceModelInput {
+	surfaceID = strings.TrimSpace(surfaceID)
+	if surfaceID == "" || len(models) == 0 {
 		return nil
 	}
-	out := make([]*managementv1.ProviderSurfaceModelCatalog, 0, len(items))
-	for _, item := range items {
-		if item == nil {
-			continue
-		}
-		out = append(out, proto.Clone(item).(*managementv1.ProviderSurfaceModelCatalog))
-	}
-	return out
-}
-
-func providerConnectSurfaceCatalogs(items []*managementv1.ProviderSurfaceModelCatalog) []*providerconnect.ProviderModelCatalogInput {
-	if len(items) == 0 {
-		return nil
-	}
-	out := make([]*providerconnect.ProviderModelCatalogInput, 0, len(items))
-	for _, item := range items {
-		if item == nil {
-			continue
-		}
-		out = append(out, &providerconnect.ProviderModelCatalogInput{
-			SurfaceID: item.GetSurfaceId(),
-			Models:    cloneProviderModels(item.GetModels()),
-		})
-	}
-	return out
+	return []*providerconnect.SurfaceModelInput{{
+		SurfaceID: surfaceID,
+		Models:    cloneProviderModels(models),
+	}}
 }
 
 func managementConnectResponseFromResult(result *providerconnect.ConnectResult) *managementv1.ConnectProviderResponse {
@@ -104,6 +91,11 @@ func managementSessionViewFromProviderConnect(view *providerconnect.SessionView)
 	if view == nil {
 		return nil
 	}
+	provider := managementProviderViewFromProviderConnect(view.GetProvider())
+	surfaceID := ""
+	if provider != nil {
+		surfaceID = provider.GetSurfaceId()
+	}
 	return &managementv1.ProviderConnectSessionView{
 		SessionId:        view.GetSessionId(),
 		OauthSessionId:   view.GetOauthSessionId(),
@@ -113,10 +105,9 @@ func managementSessionViewFromProviderConnect(view *providerconnect.SessionView)
 		UserCode:         view.GetUserCode(),
 		Message:          view.GetMessage(),
 		ErrorMessage:     view.GetErrorMessage(),
-		Provider:         managementProviderViewFromProviderConnect(view.GetProvider()),
+		Provider:         provider,
 		AddMethod:        managementAddMethodFromProviderConnect(view.GetAddMethod()),
-		VendorId:         view.GetVendorId(),
-		CliId:            view.GetCliId(),
+		SurfaceId:        surfaceID,
 	}
 }
 
@@ -129,10 +120,12 @@ func managementProviderViewFromProviderConnect(view *providerconnect.ProviderVie
 		DisplayName:          view.GetDisplayName(),
 		SurfaceId:            view.GetSurfaceId(),
 		ProviderCredentialId: view.GetProviderCredentialId(),
-		ProductInfoId:        view.GetProductInfoId(),
-	}
-	if runtime := view.GetRuntime(); runtime != nil {
-		out.Runtime = proto.Clone(runtime).(*providerv1.ProviderSurfaceRuntime)
+		Models:               cloneProviderModels(view.GetModels()),
+		Endpoints:            cloneProviderEndpoints(view.GetEndpoints()),
+		Status: &managementv1.ProviderStatus{
+			Phase:  managementProviderPhaseFromProviderConnect(view.GetStatus().GetPhase()),
+			Reason: view.GetStatus().GetReason(),
+		},
 	}
 	return out
 }
@@ -186,16 +179,30 @@ func managementProviderPhaseFromProviderConnect(value providerconnect.ProviderPh
 	}
 }
 
-func cloneProviderModels(items []*providerv1.ProviderModelCatalogEntry) []*providerv1.ProviderModelCatalogEntry {
+func cloneProviderModels(items []*providerv1.ProviderModel) []*providerv1.ProviderModel {
 	if len(items) == 0 {
 		return nil
 	}
-	out := make([]*providerv1.ProviderModelCatalogEntry, 0, len(items))
+	out := make([]*providerv1.ProviderModel, 0, len(items))
 	for _, item := range items {
 		if item == nil {
 			continue
 		}
-		out = append(out, proto.Clone(item).(*providerv1.ProviderModelCatalogEntry))
+		out = append(out, proto.Clone(item).(*providerv1.ProviderModel))
+	}
+	return out
+}
+
+func cloneProviderEndpoints(items []*providerv1.ProviderEndpoint) []*providerv1.ProviderEndpoint {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]*providerv1.ProviderEndpoint, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		out = append(out, proto.Clone(item).(*providerv1.ProviderEndpoint))
 	}
 	return out
 }

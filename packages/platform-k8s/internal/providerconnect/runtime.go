@@ -11,10 +11,6 @@ type providerCreationService interface {
 	CreateProvider(ctx context.Context, provider *providerv1.Provider) (*ProviderView, error)
 }
 
-type vendorSupportReader interface {
-	GetForConnect(ctx context.Context, vendorID string) (*supportv1.Vendor, error)
-}
-
 type cliSupportReader interface {
 	Get(ctx context.Context, cliID string) (*supportv1.CLI, error)
 }
@@ -42,14 +38,12 @@ func (r providerConnectResources) APIKeyConnectRuntime() apiKeyConnectRuntime {
 }
 
 type providerConnectSupport struct {
-	vendors vendorSupportReader
-	clis    cliSupportReader
+	clis cliSupportReader
 }
 
-func newProviderConnectSupport(vendors vendorSupportReader, clis cliSupportReader) providerConnectSupport {
+func newProviderConnectSupport(clis cliSupportReader) providerConnectSupport {
 	return providerConnectSupport{
-		vendors: vendors,
-		clis:    clis,
+		clis: clis,
 	}
 }
 

@@ -31,11 +31,9 @@ type ProviderView struct {
 	DisplayName          string
 	SurfaceID            string
 	ProviderCredentialID string
-	Runtime              *providerv1.ProviderSurfaceRuntime
+	Endpoints            []*providerv1.ProviderEndpoint
+	Models               []*providerv1.ProviderModel
 	Status               *ProviderStatusView
-	ProductInfoID        string
-	VendorID             string
-	ProviderDisplayName  string
 }
 
 func (v *ProviderView) GetProviderId() string {
@@ -66,11 +64,18 @@ func (v *ProviderView) GetProviderCredentialId() string {
 	return v.ProviderCredentialID
 }
 
-func (v *ProviderView) GetRuntime() *providerv1.ProviderSurfaceRuntime {
+func (v *ProviderView) GetEndpoints() []*providerv1.ProviderEndpoint {
 	if v == nil {
 		return nil
 	}
-	return v.Runtime
+	return v.Endpoints
+}
+
+func (v *ProviderView) GetModels() []*providerv1.ProviderModel {
+	if v == nil {
+		return nil
+	}
+	return v.Models
 }
 
 func (v *ProviderView) GetStatus() *ProviderStatusView {
@@ -80,34 +85,21 @@ func (v *ProviderView) GetStatus() *ProviderStatusView {
 	return v.Status
 }
 
-func (v *ProviderView) GetProductInfoId() string {
-	if v == nil {
-		return ""
-	}
-	return v.ProductInfoID
-}
-
-func (v *ProviderView) GetVendorId() string {
-	if v == nil {
-		return ""
-	}
-	return v.VendorID
-}
-
-func (v *ProviderView) GetProviderDisplayName() string {
-	if v == nil {
-		return ""
-	}
-	return v.ProviderDisplayName
-}
-
 func cloneProviderView(view *ProviderView) *ProviderView {
 	if view == nil {
 		return nil
 	}
 	next := *view
-	if view.Runtime != nil {
-		next.Runtime = proto.Clone(view.Runtime).(*providerv1.ProviderSurfaceRuntime)
+	if len(view.Endpoints) > 0 {
+		next.Endpoints = make([]*providerv1.ProviderEndpoint, 0, len(view.Endpoints))
+		for _, endpoint := range view.Endpoints {
+			if endpoint != nil {
+				next.Endpoints = append(next.Endpoints, proto.Clone(endpoint).(*providerv1.ProviderEndpoint))
+			}
+		}
+	}
+	if len(view.Models) > 0 {
+		next.Models = cloneProviderModels(view.Models)
 	}
 	if view.Status != nil {
 		status := *view.Status

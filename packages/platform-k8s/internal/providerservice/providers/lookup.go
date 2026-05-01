@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	providercontract "code-code.internal/agent-runtime-contract/provider"
-	providerv1 "code-code.internal/go-contract/provider/v1"
+	supportv1 "code-code.internal/go-contract/platform/support/v1"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -29,8 +29,8 @@ func (l *Lookup) Register(provider providercontract.Provider) error {
 		return fmt.Errorf("platformk8s/providers: provider is nil")
 	}
 	surface := provider.Surface()
-	if err := providerv1.ValidateProviderSurface(surface); err != nil {
-		return fmt.Errorf("platformk8s/providers: invalid provider surface: %w", err)
+	if surface.GetSurfaceId() == "" {
+		return fmt.Errorf("platformk8s/providers: provider surface id is empty")
 	}
 
 	l.mu.Lock()
@@ -60,24 +60,24 @@ func (l *Lookup) Get(surfaceID string) (providercontract.Provider, error) {
 }
 
 // GetSurface returns one provider surface by stable identity.
-func (l *Lookup) GetSurface(surfaceID string) (*providerv1.ProviderSurface, error) {
+func (l *Lookup) GetSurface(surfaceID string) (*supportv1.Surface, error) {
 	provider, err := l.Get(surfaceID)
 	if err != nil {
 		return nil, err
 	}
-	return proto.Clone(provider.Surface()).(*providerv1.ProviderSurface), nil
+	return proto.Clone(provider.Surface()).(*supportv1.Surface), nil
 }
 
 // ListSurfaces returns all registered provider surfaces sorted by id.
-func (l *Lookup) ListSurfaces() []*providerv1.ProviderSurface {
+func (l *Lookup) ListSurfaces() []*supportv1.Surface {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
-	items := make([]*providerv1.ProviderSurface, 0, len(l.providers))
+	items := make([]*supportv1.Surface, 0, len(l.providers))
 	for _, provider := range l.providers {
-		items = append(items, proto.Clone(provider.Surface()).(*providerv1.ProviderSurface))
+		items = append(items, proto.Clone(provider.Surface()).(*supportv1.Surface))
 	}
-	slices.SortFunc(items, func(left, right *providerv1.ProviderSurface) int {
+	slices.SortFunc(items, func(left, right *supportv1.Surface) int {
 		switch {
 		case left.GetSurfaceId() < right.GetSurfaceId():
 			return -1

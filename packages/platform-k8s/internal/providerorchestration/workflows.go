@@ -6,6 +6,8 @@ import (
 
 	apiprotocolv1 "code-code.internal/go-contract/api_protocol/v1"
 	managementv1 "code-code.internal/go-contract/platform/management/v1"
+	providerservicev1 "code-code.internal/go-contract/platform/provider/v1"
+	providerv1 "code-code.internal/go-contract/provider/v1"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 )
@@ -17,6 +19,7 @@ const (
 	ProviderAPIKeyAuthUpdatedWorkflowName        = "platform.providerOrchestration.apiKeyAuthUpdated"
 	ProviderObservabilityAuthUpdatedWorkflowName = "platform.providerOrchestration.observabilityAuthUpdated"
 	ProviderConnectSessionSyncWorkflowName       = "platform.providerOrchestration.syncConnectSession"
+	ProviderPostConnectWorkflowName              = "platform.providerOrchestration.postConnect"
 
 	connectAPIKeyProviderActivityName     = "platform.providerOrchestration.connectApiKeyProvider"
 	connectCLIOAuthProviderActivityName   = "platform.providerOrchestration.connectCliOAuthProvider"
@@ -29,16 +32,16 @@ const (
 type APIKeyConnectWorkflowInput struct {
 	CredentialID string
 	DisplayName  string
-	VendorID     string
+	SurfaceID    string
 	BaseURL      string
 	Protocol     apiprotocolv1.Protocol
-	Catalogs     []*managementv1.ProviderSurfaceModelCatalog
+	Models       []*providerv1.ProviderModel
 	Compensate   bool
 }
 
 type CLIOAuthConnectWorkflowInput struct {
 	DisplayName string
-	CLIID       string
+	SurfaceID   string
 }
 
 type CLIOAuthReauthorizationWorkflowInput struct {
@@ -115,6 +118,36 @@ func ProviderConnectSessionSyncWorkflow(ctx workflow.Context, input ProviderConn
 		return nil, err
 	}
 	return &response, nil
+}
+
+func ProviderPostConnectWorkflow(ctx workflow.Context, input ProviderUpdatedWorkflowInput) error {
+	ctx = workflow.WithActivityOptions(ctx, probeActivityOptions())
+	tasks := []struct {
+		activity string
+		input    ProviderProbeTaskInput
+	}{
+		{
+			activity: runModelCatalogProbeTaskActivityName,
+			input: ProviderProbeTaskInput{
+				ProviderID: input.ProviderID,
+				Trigger:    providerservicev1.ProviderObservabilityProbeTrigger_PROVIDER_OBSERVABILITY_PROBE_TRIGGER_CONNECT,
+			},
+		},
+		{
+			activity: runQuotaProbeTaskActivityName,
+			input: ProviderProbeTaskInput{
+				ProviderID: input.ProviderID,
+				Trigger:    providerservicev1.ProviderObservabilityProbeTrigger_PROVIDER_OBSERVABILITY_PROBE_TRIGGER_CONNECT,
+			},
+		},
+	}
+	var firstErr error
+	for _, task := range tasks {
+		if err := workflow.ExecuteActivity(ctx, task.activity, task.input).Get(ctx, nil); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func providerActivityOptions() workflow.ActivityOptions {

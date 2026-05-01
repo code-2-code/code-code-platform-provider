@@ -30,6 +30,28 @@ func (s *Service) Update(ctx context.Context, providerID string, command UpdateP
 	return s.Get(ctx, projection.ID())
 }
 
+func (s *Service) ApplyModelCatalog(ctx context.Context, providerID string, models []*providerv1.ProviderModel) (*managementv1.ProviderView, error) {
+	projection, err := s.getProviderProjection(ctx, providerID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.mutationRuntime().ApplyModelCatalog(ctx, projection, models); err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, projection.ID())
+}
+
+func (s *Service) ApplyProbeStatus(ctx context.Context, providerID string, kind providerv1.ProviderProbeKind, state *providerv1.ProviderProbeRunState) (*managementv1.ProviderView, error) {
+	projection, err := s.getProviderProjection(ctx, providerID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.mutationRuntime().ApplyProbeStatus(ctx, projection, kind, state); err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, projection.ID())
+}
+
 func (s *Service) Delete(ctx context.Context, providerID string) error {
 	projection, err := s.getProviderProjection(ctx, providerID)
 	if err != nil {

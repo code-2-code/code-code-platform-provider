@@ -6,7 +6,6 @@ import (
 	credentialv1 "code-code.internal/go-contract/credential/v1"
 	"code-code.internal/go-contract/domainerror"
 	providerv1 "code-code.internal/go-contract/provider/v1"
-	"google.golang.org/protobuf/proto"
 )
 
 type oauthFinalizePlan struct {
@@ -31,12 +30,12 @@ func newOAuthFinalizePlan(record *sessionRecord, oauthState *credentialv1.OAuthA
 			oauthState.GetSpec().GetSessionId(),
 		)
 	}
-	runtime, err := record.runtime()
+	target, err := record.target()
 	if err != nil {
 		return nil, err
 	}
 	return &oauthFinalizePlan{
-		target:       record.target(runtime),
+		target:       target,
 		credentialID: credentialID,
 	}, nil
 }
@@ -83,12 +82,6 @@ func (p *oauthFinalizePlan) ValidateExisting(existing *ProviderView) error {
 		surface.GetProviderCredentialRef().GetProviderCredentialId(),
 	); err != nil {
 		return err
-	}
-	if !proto.Equal(existing.GetRuntime(), surface.GetRuntime()) {
-		return domainerror.NewAlreadyExists(
-			"platformk8s/providerconnect: provider surface %q already exists with different runtime",
-			surface.GetSurfaceId(),
-		)
 	}
 	return nil
 }

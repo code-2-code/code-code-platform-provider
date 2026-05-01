@@ -47,17 +47,21 @@ func (c *googleAIStudioObservabilityCollector) Collect(ctx context.Context, inpu
 	if input.HTTPClient == nil {
 		return nil, fmt.Errorf("providerobservability: google ai studio quotas: http client is nil")
 	}
-	projectID := ""
 	origin := googleAIStudioDefaultOrigin
 	now := c.now().UTC()
 	baseURL := strings.TrimSpace(googleAIStudioRPCBaseURL)
+	authFields := googleAIStudioAuthFields(input)
+	projectID, err := c.readProjectID(ctx, input)
+	if err != nil {
+		return nil, err
+	}
 
 	var projectPath string
 	tierHint := googleAIStudioTierHint{}
 	if path, ok := normalizeGoogleAIStudioProjectPath(projectID); ok {
 		projectPath = path
 	} else {
-		projectPath, tierHint, err = c.resolveProjectPath(ctx, input.HTTPClient, baseURL, origin, projectID)
+		projectPath, tierHint, err = c.resolveProjectPath(ctx, input.HTTPClient, baseURL, origin, projectID, authFields)
 		if err != nil {
 			return nil, err
 		}
@@ -68,6 +72,7 @@ func (c *googleAIStudioObservabilityCollector) Collect(ctx context.Context, inpu
 		Method:      "ListModelRateLimits",
 		Origin:      origin,
 		ProjectPath: projectPath,
+		Auth:        authFields,
 	})
 	if err != nil {
 		return nil, err
@@ -81,6 +86,7 @@ func (c *googleAIStudioObservabilityCollector) Collect(ctx context.Context, inpu
 		BaseURL: baseURL,
 		Method:  "ListQuotaModels",
 		Origin:  origin,
+		Auth:    authFields,
 	})
 	if err != nil {
 		return nil, err
@@ -101,6 +107,7 @@ func (c *googleAIStudioObservabilityCollector) Collect(ctx context.Context, inpu
 		BaseURL:     baseURL,
 		Origin:      origin,
 		ProjectPath: projectPath,
+		Auth:        authFields,
 	}
 	models, err = c.enrichGoogleAIStudioMetricTimeSeriesRows(ctx, input.HTTPClient, metricTimeSeriesInput, models)
 	if err != nil {
@@ -123,11 +130,13 @@ func (c *googleAIStudioObservabilityCollector) resolveProjectPath(
 	baseURL string,
 	origin string,
 	projectID string,
+	authFields googleAIStudioAuthInput,
 ) (string, googleAIStudioTierHint, error) {
 	cloudProjectsBody, callErr := c.call(ctx, httpClient, googleAIStudioRPCCallInput{
 		BaseURL: baseURL,
 		Method:  "ListCloudProjects",
 		Origin:  origin,
+		Auth:    authFields,
 	})
 	if callErr != nil {
 		return "", googleAIStudioTierHint{}, callErr
