@@ -30,7 +30,7 @@ func (c *googleAIStudioObservabilityCollector) readProjectID(ctx context.Context
 		CredentialId: credentialID,
 		FieldIds:     []string{materialKeyProjectID},
 		PolicyRef: &authv1.CredentialMaterialReadPolicyRef{
-			Kind:        authv1.CredentialMaterialReadPolicyKind_CREDENTIAL_MATERIAL_READ_POLICY_KIND_VENDOR_ACTIVE_QUERY,
+			Kind:        authv1.CredentialMaterialReadPolicyKind_CREDENTIAL_MATERIAL_READ_POLICY_KIND_VENDOR_QUOTA_QUERY,
 			OwnerId:     googleAIStudioVendorID,
 			SurfaceId:   strings.TrimSpace(input.SurfaceID),
 			CollectorId: googleAIStudioCollectorID,
